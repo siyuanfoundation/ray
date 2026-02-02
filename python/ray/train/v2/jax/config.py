@@ -80,7 +80,7 @@ def _setup_jax_distributed_environment(
 
     import jax
 
-    if "tpu" in jax_platforms.split(","):
+    if "tpu" in jax_platforms.split(",") or "cpu" in jax_platforms.split(","):
         jax.distributed.initialize(master_addr_with_port, num_workers, index)
         logger.info("Initialized JAX distributed on TPU.")
 
