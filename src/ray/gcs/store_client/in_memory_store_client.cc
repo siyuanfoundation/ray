@@ -179,10 +179,24 @@ void InMemoryStoreClient::DoSnapshot() {
 
   std::string serialized;
   if (snapshot.SerializeToString(&serialized)) {
-    std::ofstream os(snapshot_path_, std::ios::binary | std::ios::trunc);
+    std::string temp_path = snapshot_path_ + ".tmp";
+    std::ofstream os(temp_path, std::ios::binary | std::ios::trunc);
+    if (!os) {
+      RAY_LOG(ERROR) << "Failed to open temporary GCS snapshot file: " << temp_path;
+      return;
+    }
     os << serialized;
+    os.flush();
     os.close();
-    RAY_LOG(DEBUG) << "GCS snapshot done.";
+
+    // Atomic rename
+    std::error_code ec;
+    std::filesystem::rename(temp_path, snapshot_path_, ec);
+    if (ec) {
+      RAY_LOG(ERROR) << "Failed to rename temporary GCS snapshot file: " << ec.message();
+    } else {
+      RAY_LOG(DEBUG) << "GCS snapshot done.";
+    }
   } else {
     RAY_LOG(ERROR) << "Failed to serialize GCS snapshot.";
   }
