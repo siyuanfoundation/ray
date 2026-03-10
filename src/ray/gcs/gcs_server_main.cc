@@ -177,6 +177,10 @@ int main(int argc, char *argv[]) {
   gcs_server_config.log_dir = log_dir;
   gcs_server_config.raylet_config_list = config_list;
   gcs_server_config.session_name = session_name;
+  gcs_server_config.gcs_storage_snapshot_period_ms =
+      RayConfig::instance().gcs_storage_snapshot_period_ms();
+  gcs_server_config.gcs_storage_snapshot_path =
+      RayConfig::instance().gcs_storage_snapshot_path();
 
   // Create individual metrics
   auto actor_by_state_gauge = ray::GetActorByStateGaugeMetric();

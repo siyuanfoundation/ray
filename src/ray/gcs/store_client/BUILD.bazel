@@ -48,7 +48,9 @@ ray_cc_library(
     deps = [
         ":store_client",
         "//src/ray/common:asio",
+        "//src/ray/protobuf:gcs_snapshot_cc_proto",
         "//src/ray/util:concurrent_flat_map",
+        "//src/ray/util:filesystem",
         "@com_google_absl//absl/container:node_hash_map",
     ],
 )

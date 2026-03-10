@@ -20,6 +20,7 @@
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/node_hash_map.h"
 #include "absl/synchronization/mutex.h"
+#include "ray/common/asio/periodical_runner.h"
 #include "ray/gcs/store_client/store_client.h"
 #include "ray/util/concurrent_flat_map.h"
 
@@ -32,6 +33,10 @@ namespace ray::gcs {
 class InMemoryStoreClient : public StoreClient {
  public:
   explicit InMemoryStoreClient() = default;
+
+  explicit InMemoryStoreClient(instrumented_io_context &io_context,
+                               std::string snapshot_path,
+                               uint64_t snapshot_period_ms);
 
   void AsyncPut(const std::string &table_name,
                 const std::string &key,
@@ -70,7 +75,16 @@ class InMemoryStoreClient : public StoreClient {
                    const std::string &key,
                    Postable<void(bool)> callback) override;
 
+  /// Load snapshot from disk.
+  Status LoadSnapshot();
+
+  /// Trigger snapshot to disk manually.
+  void TriggerSnapshot();
+
  private:
+  /// Do snapshot to disk.
+  void DoSnapshot();
+
   // The returned reference is valid as long as the InMemoryStoreClient is alive and
   // as long as no other thread erases the InMemoryTable from tables_.
   ConcurrentFlatMap<std::string, std::string> &GetOrCreateMutableTable(
@@ -93,6 +107,11 @@ class InMemoryStoreClient : public StoreClient {
 
   /// Current job id, auto-increment when request next-id.
   std::atomic<int> job_id_ = 1;
+
+  /// Snapshot path.
+  std::string snapshot_path_;
+  /// Periodical runner for snapshots.
+  std::shared_ptr<PeriodicalRunner> periodical_runner_;
 };
 
 }  // namespace ray::gcs

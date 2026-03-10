@@ -85,6 +85,16 @@ cc_proto_library(
     deps = [":runtime_env_common_proto"],
 )
 
+proto_library(
+    name = "gcs_snapshot_proto",
+    srcs = ["gcs_snapshot.proto"],
+)
+
+cc_proto_library(
+    name = "gcs_snapshot_cc_proto",
+    deps = [":gcs_snapshot_proto"],
+)
+
 cc_proto_library(
     name = "gcs_cc_proto",
     deps = [":gcs_proto"],

@@ -14,11 +14,26 @@
 
 #include "ray/gcs/store_client/in_memory_store_client.h"
 
+#include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "ray/util/filesystem.h"
+#include "src/ray/protobuf/gcs_snapshot.pb.h"
+
 namespace ray::gcs {
+
+InMemoryStoreClient::InMemoryStoreClient(instrumented_io_context &io_context,
+                                         std::string snapshot_path,
+                                         uint64_t snapshot_period_ms)
+    : snapshot_path_(std::move(snapshot_path)) {
+  if (snapshot_period_ms > 0 && !snapshot_path_.empty()) {
+    periodical_runner_ = PeriodicalRunner::Create(io_context);
+    periodical_runner_->RunFnPeriodically(
+        [this] { DoSnapshot(); }, snapshot_period_ms, "InMemoryStoreClient.DoSnapshot");
+  }
+}
 
 void InMemoryStoreClient::AsyncPut(const std::string &table_name,
                                    const std::string &key,
@@ -139,6 +154,74 @@ void InMemoryStoreClient::AsyncExists(const std::string &table_name,
     result = table->Contains(key);
   }
   std::move(callback).Post("GcsInMemoryStore.Exists", result);
+}
+
+void InMemoryStoreClient::TriggerSnapshot() { DoSnapshot(); }
+
+void InMemoryStoreClient::DoSnapshot() {
+  if (snapshot_path_.empty()) {
+    return;
+  }
+  RAY_LOG(DEBUG) << "Doing GCS snapshot to " << snapshot_path_;
+  rpc::GcsSnapshot snapshot;
+  {
+    absl::ReaderMutexLock lock(&mutex_);
+    for (const auto &it : tables_) {
+      auto *table_proto = snapshot.add_tables();
+      table_proto->set_table_name(it.first);
+      auto map = it.second.GetMapClone();
+      for (const auto &entry : map) {
+        (*table_proto->mutable_entries())[entry.first] = entry.second;
+      }
+    }
+    snapshot.set_job_id(job_id_.load());
+  }
+
+  std::string serialized;
+  if (snapshot.SerializeToString(&serialized)) {
+    std::ofstream os(snapshot_path_, std::ios::binary | std::ios::trunc);
+    os << serialized;
+    os.close();
+    RAY_LOG(DEBUG) << "GCS snapshot done.";
+  } else {
+    RAY_LOG(ERROR) << "Failed to serialize GCS snapshot.";
+  }
+}
+
+Status InMemoryStoreClient::LoadSnapshot() {
+  if (snapshot_path_.empty()) {
+    return Status::OK();
+  }
+
+  std::ifstream is(snapshot_path_, std::ios::binary);
+  if (!is.is_open()) {
+    RAY_LOG(INFO) << "No GCS snapshot found at " << snapshot_path_;
+    return Status::OK();
+  }
+
+  RAY_LOG(INFO) << "Loading GCS snapshot from " << snapshot_path_;
+  std::string serialized((std::istreambuf_iterator<char>(is)),
+                         std::istreambuf_iterator<char>());
+  is.close();
+
+  rpc::GcsSnapshot snapshot;
+  if (!snapshot.ParseFromString(serialized)) {
+    return Status::Invalid("Failed to parse GCS snapshot.");
+  }
+
+  {
+    absl::WriterMutexLock lock(&mutex_);
+    for (const auto &table_proto : snapshot.tables()) {
+      auto &table = tables_[table_proto.table_name()];
+      for (const auto &entry : table_proto.entries()) {
+        table.InsertOrAssign(entry.first, entry.second);
+      }
+    }
+    job_id_ = snapshot.job_id();
+  }
+
+  RAY_LOG(INFO) << "GCS snapshot loaded successfully.";
+  return Status::OK();
 }
 
 }  // namespace ray::gcs

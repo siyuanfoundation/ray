@@ -157,12 +157,18 @@ GcsServer::GcsServer(const ray::gcs::GcsServerConfig &config,
   auto &io_context = io_context_provider_.GetDefaultIOContext();
   std::shared_ptr<StoreClient> store_client;
   switch (storage_type_) {
-  case StorageType::IN_MEMORY:
+  case StorageType::IN_MEMORY: {
+    auto in_memory_store_client =
+        std::make_unique<InMemoryStoreClient>(io_context,
+                                              config_.gcs_storage_snapshot_path,
+                                              config_.gcs_storage_snapshot_period_ms);
+    RAY_CHECK_OK(in_memory_store_client->LoadSnapshot());
     store_client = std::make_shared<ObservableStoreClient>(
-        std::make_unique<InMemoryStoreClient>(),
+        std::move(in_memory_store_client),
         metrics_.storage_operation_latency_in_ms_histogram,
         metrics_.storage_operation_count_counter);
     break;
+  }
   case StorageType::REDIS_PERSIST: {
     auto redis_store_client =
         std::make_shared<RedisStoreClient>(io_context, GetRedisClientOptions());
@@ -634,12 +640,20 @@ void GcsServer::InitKVManager() {
     store_client =
         std::make_unique<RedisStoreClient>(io_context, GetRedisClientOptions());
     break;
-  case (StorageType::IN_MEMORY):
+  case (StorageType::IN_MEMORY): {
+    auto in_memory_store_client = std::make_unique<InMemoryStoreClient>(
+        io_context,
+        config_.gcs_storage_snapshot_path.empty()
+            ? ""
+            : config_.gcs_storage_snapshot_path + ".kv",
+        config_.gcs_storage_snapshot_period_ms);
+    RAY_CHECK_OK(in_memory_store_client->LoadSnapshot());
     store_client = std::make_unique<ObservableStoreClient>(
-        std::make_unique<InMemoryStoreClient>(),
+        std::move(in_memory_store_client),
         metrics_.storage_operation_latency_in_ms_histogram,
         metrics_.storage_operation_count_counter);
     break;
+  }
   default:
     RAY_LOG(FATAL) << "Unexpected storage type! " << storage_type_;
   }

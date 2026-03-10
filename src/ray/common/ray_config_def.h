@@ -403,6 +403,12 @@ RAY_CONFIG(uint32_t, maximum_gcs_dead_node_cached_count, 1000)
 // The storage backend to use for the GCS. It can be either 'redis' or 'memory'.
 RAY_CONFIG(std::string, gcs_storage, "memory")
 
+/// The period of GCS storage snapshot in milliseconds. 0 means disable.
+RAY_CONFIG(uint64_t, gcs_storage_snapshot_period_ms, 0)
+
+/// The path of GCS storage snapshot file.
+RAY_CONFIG(std::string, gcs_storage_snapshot_path, "")
+
 /// Duration to sleep after failing to put an object in plasma because it is full.
 RAY_CONFIG(uint32_t, object_store_full_delay_ms, 10)
 

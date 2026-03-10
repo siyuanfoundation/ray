@@ -78,6 +78,19 @@ ray_cc_test(
 )
 
 ray_cc_test(
+    name = "in_memory_store_client_snapshot_test",
+    size = "small",
+    srcs = ["in_memory_store_client_snapshot_test.cc"],
+    tags = ["team:core"],
+    deps = [
+        "//src/ray/common:asio",
+        "//src/ray/gcs/store_client:in_memory_store_client",
+        "//src/ray/protobuf:gcs_snapshot_cc_proto",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+ray_cc_test(
     name = "observable_store_client_test",
     size = "small",
     srcs = ["observable_store_client_test.cc"],

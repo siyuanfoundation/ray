@@ -70,6 +70,9 @@ struct GcsServerConfig {
   // This includes the config list of raylet.
   std::string raylet_config_list;
   std::string session_name;
+  // GCS storage snapshot related configs.
+  uint64_t gcs_storage_snapshot_period_ms = 0;
+  std::string gcs_storage_snapshot_path;
 };
 
 class GcsNodeManager;
