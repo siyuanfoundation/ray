@@ -99,6 +99,14 @@ def ray_deps_setup():
         patch_args = ["-p1"],
     )
 
+    auto_http_archive(
+        name = "com_github_hyc_lmdb",
+        build_file = "@io_ray//bazel:lmdb.BUILD",
+        sha256 = "dd70a8c67807b3b8532b3e987b0a4e998962ecc28643e1af5ec77696b081c9b0",
+        strip_prefix = "lmdb-LMDB_0.9.31",
+        urls = ["https://github.com/LMDB/lmdb/archive/refs/tags/LMDB_0.9.31.tar.gz"],
+    )
+
     # NOTE(lingxuan.zlx): 3rd party dependencies could be accessed, so it suggests
     # all of http/git_repository should add prefix for patches defined in ray directory.
     auto_http_archive(

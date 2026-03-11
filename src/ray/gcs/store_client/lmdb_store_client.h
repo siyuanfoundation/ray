@@ -17,6 +17,9 @@
 #include <string>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
+#include "absl/synchronization/mutex.h"
+#include "lmdb.h"
 #include "ray/common/asio/instrumented_io_context.h"
 #include "ray/gcs/store_client/store_client.h"
 
@@ -29,6 +32,8 @@ namespace ray::gcs {
 class LMDBStoreClient : public StoreClient {
  public:
   explicit LMDBStoreClient(instrumented_io_context &io_context, std::string lmdb_path);
+
+  ~LMDBStoreClient() override;
 
   void AsyncPut(const std::string &table_name,
                 const std::string &key,
@@ -68,8 +73,18 @@ class LMDBStoreClient : public StoreClient {
                    Postable<void(bool)> callback) override;
 
  private:
+  MDB_dbi GetOrCreateTable(MDB_txn *txn, const std::string &table_name);
+
   instrumented_io_context &io_context_;
   std::string lmdb_path_;
+
+  MDB_env *env_ = nullptr;
+  absl::Mutex mutex_;
+  absl::flat_hash_map<std::string, MDB_dbi> dbis_ ABSL_GUARDED_BY(mutex_);
+
+  /// Dedicated thread for LMDB operations to avoid MDB_NOTLS issues.
+  std::unique_ptr<std::thread> worker_thread_;
+  instrumented_io_context worker_io_context_;
 };
 
 }  // namespace ray::gcs

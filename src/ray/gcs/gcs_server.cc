@@ -31,7 +31,6 @@
 #include "ray/gcs/gcs_resource_manager.h"
 #include "ray/gcs/gcs_worker_manager.h"
 #include "ray/gcs/grpc_services.h"
-#include "ray/gcs/store_client/etcd_store_client.h"
 #include "ray/gcs/store_client/in_memory_store_client.h"
 #include "ray/gcs/store_client/lmdb_store_client.h"
 #include "ray/gcs/store_client/observable_store_client.h"
@@ -172,15 +171,12 @@ GcsServer::GcsServer(const ray::gcs::GcsServerConfig &config,
     break;
   }
   case StorageType::LMDB: {
+    std::string lmdb_path = config_.lmdb_path;
+    if (lmdb_path.empty()) {
+      lmdb_path = config_.session_name + "/gcs_storage";
+    }
     store_client = std::make_shared<ObservableStoreClient>(
-        std::make_unique<LMDBStoreClient>(io_context, config_.lmdb_path),
-        metrics_.storage_operation_latency_in_ms_histogram,
-        metrics_.storage_operation_count_counter);
-    break;
-  }
-  case StorageType::ETCD: {
-    store_client = std::make_shared<ObservableStoreClient>(
-        std::make_unique<EtcdStoreClient>(io_context, config_.etcd_endpoints),
+        std::make_unique<LMDBStoreClient>(io_context, lmdb_path),
         metrics_.storage_operation_latency_in_ms_histogram,
         metrics_.storage_operation_count_counter);
     break;
@@ -677,22 +673,12 @@ void GcsServer::InitKVManager() {
     break;
   }
   case StorageType::LMDB: {
+    std::string lmdb_path = config_.lmdb_path;
+    if (lmdb_path.empty()) {
+      lmdb_path = config_.session_name + "/gcs_storage";
+    }
     store_client = std::make_unique<ObservableStoreClient>(
-        std::make_unique<LMDBStoreClient>(io_context, config_.lmdb_path),
-        metrics_.storage_operation_latency_in_ms_histogram,
-        metrics_.storage_operation_count_counter);
-    break;
-  }
-  case StorageType::ETCD: {
-    store_client = std::make_unique<ObservableStoreClient>(
-        std::make_unique<EtcdStoreClient>(io_context, config_.etcd_endpoints),
-        metrics_.storage_operation_latency_in_ms_histogram,
-        metrics_.storage_operation_count_counter);
-    break;
-  }
-  case StorageType::ETCD: {
-    store_client = std::make_unique<ObservableStoreClient>(
-        std::make_unique<EtcdStoreClient>(io_context, config_.etcd_endpoints),
+        std::make_unique<LMDBStoreClient>(io_context, lmdb_path),
         metrics_.storage_operation_latency_in_ms_histogram,
         metrics_.storage_operation_count_counter);
     break;

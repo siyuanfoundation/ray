@@ -416,6 +416,8 @@ ray_cc_library(
         ":gcs_init_data",
         ":gcs_job_manager",
         ":gcs_kv_manager",
+        "//src/ray/gcs/store_client:lmdb_store_client",
+        "//src/ray/gcs/store_client:etcd_store_client",
         ":gcs_node_manager",
         ":gcs_placement_group",
         ":gcs_placement_group_manager",
