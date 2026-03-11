@@ -1,0 +1,38 @@
+apiVersion: ray.io/v1
+kind: RayCluster
+metadata:
+  name: ray-gcs-lmdb
+spec:
+  rayVersion: '3.0.0'
+  headGroupSpec:
+    rayStartParams:
+      dashboard-host: '0.0.0.0'
+      # Set storage type to LMDB and point to the mounted disk
+      system-config: '{"gcs_storage_type": "LMDB", "gcs_storage_lmdb_path": "/var/lib/ray/gcs_lmdb"}'
+    template:
+      spec:
+        containers:
+        - name: ray-head
+          image: us-east5-docker.pkg.dev/tpu-vm-gke-testing/sizhang-repo/ray-mem-snap:v2.54.1
+          env:
+          - name: RAY_gcs_rpc_server_reconnect_timeout_s
+            value: "600"
+          volumeMounts:
+          - name: lmdb-storage
+            mountPath: /var/lib/ray/gcs_lmdb
+        volumes:
+        - name: lmdb-storage
+          persistentVolumeClaim:
+            claimName: lmdb-pvc
+  workerGroupSpecs:
+  - replicas: 1
+    groupName: worker-group
+    rayStartParams: {}
+    template:
+      spec:
+        containers:
+        - name: ray-worker
+          image: us-east5-docker.pkg.dev/tpu-vm-gke-testing/sizhang-repo/ray-mem-snap:v2.54.1
+          env:
+          - name: RAY_gcs_rpc_server_reconnect_timeout_s
+            value: "600"

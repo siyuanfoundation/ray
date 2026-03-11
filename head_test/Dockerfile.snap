@@ -1,0 +1,7 @@
+FROM rayproject/ray:latest-py310
+
+# Copy the locally built wheel
+COPY python/dist/ray-3.0.0.dev0-cp310-cp310-linux_x86_64.whl /tmp/
+
+# Install the wheel
+RUN pip install --force-reinstall --no-deps /tmp/ray-3.0.0.dev0-cp310-cp310-linux_x86_64.whl

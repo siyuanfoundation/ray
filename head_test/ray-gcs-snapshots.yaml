@@ -1,0 +1,51 @@
+apiVersion:ray.io/v1
+kind: RayCluster
+metadata:
+  name: ray-gcs-snapshots
+spec:
+  rayVersion: '3.0.0'
+  headGroupSpec:
+    serviceAccountName: ray-ksa
+    rayStartParams:
+      dashboard-host: '0.0.0.0'
+      system-config: '{"gcs_storage_snapshot_period_ms": 30000, "gcs_storage_snapshot_path": "/etc/ray-snap/gcs_snapshot.pb"}'
+    template:
+      metadata:
+        annotations:
+          gke-gcsfuse/volumes: "true"
+      spec:
+        containers:
+        - name: ray-head
+          image: us-east5-docker.pkg.dev/tpu-vm-gke-testing/sizhang-repo/ray-mem-snap:v2.54.1
+          env:
+          - name: RAY_gcs_rpc_server_reconnect_timeout_s
+            value: "600"
+          - name: RAY_gcs_server_request_timeout_seconds
+            value: "60"
+          ports:
+          - containerPort: 6379
+            name: gcs
+          - containerPort: 8265
+            name: dashboard
+          volumeMounts:
+          - name: gcs-snap-vol
+            mountPath: /etc/ray-snap
+        volumes:
+        - name: gcs-snap-vol
+          csi:
+            driver: gcsfuse.csi.storage.gke.io
+            volumeAttributes:
+              bucketName: "sizhang-tpu-us-east5"
+              mountOptions: "implicit-dirs"
+  workerGroupSpecs:
+  - replicas: 1
+    groupName: worker-group
+    rayStartParams: {}
+    template:
+      spec:
+        containers:
+        - name: ray-worker
+          image: us-east5-docker.pkg.dev/tpu-vm-gke-testing/sizhang-repo/ray-mem-snap:v2.54.1
+          env:
+          - name: RAY_gcs_rpc_server_reconnect_timeout_s
+            value: "600"
