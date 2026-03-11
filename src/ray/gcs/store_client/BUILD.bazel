@@ -56,6 +56,26 @@ ray_cc_library(
 )
 
 ray_cc_library(
+    name = "lmdb_store_client",
+    srcs = ["lmdb_store_client.cc"],
+    hdrs = ["lmdb_store_client.h"],
+    deps = [
+        ":store_client",
+        "//src/ray/common:asio",
+    ],
+)
+
+ray_cc_library(
+    name = "etcd_store_client",
+    srcs = ["etcd_store_client.cc"],
+    hdrs = ["etcd_store_client.h"],
+    deps = [
+        ":store_client",
+        "//src/ray/common:asio",
+    ],
+)
+
+ray_cc_library(
     name = "observable_store_client",
     srcs = ["observable_store_client.cc"],
     hdrs = ["observable_store_client.h"],

@@ -409,6 +409,12 @@ RAY_CONFIG(uint64_t, gcs_storage_snapshot_period_ms, 0)
 /// The path of GCS storage snapshot file.
 RAY_CONFIG(std::string, gcs_storage_snapshot_path, "")
 
+/// The path of LMDB storage file.
+RAY_CONFIG(std::string, gcs_storage_lmdb_path, "")
+
+/// The endpoints of etcd storage, separated by commas.
+RAY_CONFIG(std::string, gcs_storage_etcd_endpoints, "")
+
 /// Duration to sleep after failing to put an object in plasma because it is full.
 RAY_CONFIG(uint32_t, object_store_full_delay_ms, 10)
 

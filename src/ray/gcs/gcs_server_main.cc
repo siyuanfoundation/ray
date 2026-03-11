@@ -181,6 +181,15 @@ int main(int argc, char *argv[]) {
       RayConfig::instance().gcs_storage_snapshot_period_ms();
   gcs_server_config.gcs_storage_snapshot_path =
       RayConfig::instance().gcs_storage_snapshot_path();
+  gcs_server_config.lmdb_path = RayConfig::instance().gcs_storage_lmdb_path();
+  std::string etcd_endpoints_str = RayConfig::instance().gcs_storage_etcd_endpoints();
+  if (!etcd_endpoints_str.empty()) {
+    std::stringstream ss(etcd_endpoints_str);
+    std::string endpoint;
+    while (std::getline(ss, endpoint, ',')) {
+      gcs_server_config.etcd_endpoints.push_back(endpoint);
+    }
+  }
 
   // Create individual metrics
   auto actor_by_state_gauge = ray::GetActorByStateGaugeMetric();

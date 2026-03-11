@@ -73,6 +73,10 @@ struct GcsServerConfig {
   // GCS storage snapshot related configs.
   uint64_t gcs_storage_snapshot_period_ms = 0;
   std::string gcs_storage_snapshot_path;
+  // LMDB storage related configs.
+  std::string lmdb_path;
+  // ETCD storage related configs.
+  std::vector<std::string> etcd_endpoints;
 };
 
 class GcsNodeManager;
@@ -131,10 +135,14 @@ class GcsServer {
     UNKNOWN = 0,
     IN_MEMORY = 1,
     REDIS_PERSIST = 2,
+    LMDB = 3,
+    ETCD = 4,
   };
 
   static constexpr char kInMemoryStorage[] = "memory";
   static constexpr char kRedisStorage[] = "redis";
+  static constexpr char kLmdbStorage[] = "lmdb";
+  static constexpr char kEtcdStorage[] = "etcd";
 
   void UpdateGcsResourceManagerInTest(
       const NodeID &node_id,
