@@ -706,9 +706,12 @@ def test_single_host_data_iterator_2d_truncation_failure(ray_tpu_single_host, tm
 
     import ray
 
-    # Create 60 rows. Each row is {"features": np.ones((8,))}
-    # 60 is not divisible by 16. So if drop_last=False (the default), it should raise a ValueError.
-    ds = ray.data.from_items([{"features": np.ones((8,))} for _ in range(60)])
+    # Create 61 rows. Each row is {"features": np.ones((8,))}
+    # dp_size = 2.
+    # 61 is not divisible by 16. The last batch will have 13 rows.
+    # 13 is not divisible by dp_size=2.
+    # So if drop_last=False (the default), it should raise a ValueError.
+    ds = ray.data.from_items([{"features": np.ones((8,))} for _ in range(61)])
 
     trainer = JaxTrainer(
         train_loop_per_worker=train_func_with_data_single_host,
@@ -730,9 +733,118 @@ def test_single_host_data_iterator_2d_truncation_failure(ray_tpu_single_host, tm
         ),
     )
     with pytest.raises(
-        Exception, match="must be evenly divisible by the number of local JAX devices"
+        Exception, match="must be evenly divisible by the required divisor"
     ):
         trainer.fit()
+
+
+def train_func_replicated():
+    import unittest.mock
+
+    import jax
+    import numpy as np
+    from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
+
+    from ray import train
+
+    train_ctx = train.get_context()
+    rank = train_ctx.get_world_rank()
+
+    global_devices = jax.devices()
+    num_global_devices = len(global_devices)
+
+    # Use a 2D mesh with dp_size = 2.
+    dp_size = 2
+    tp_size = num_global_devices // dp_size
+    mesh = Mesh(np.array(global_devices).reshape(dp_size, tp_size), ("dp", "tp"))
+    sharding = NamedSharding(mesh, P("dp", "tp"))
+
+    ds_shard = train.get_dataset_shard("train")
+
+    def mock_process_allgather(arr):
+        import jax.numpy as jnp
+
+        return jnp.stack([arr] * jax.process_count())
+
+    batches = []
+    with unittest.mock.patch(
+        "jax.experimental.multihost_utils.process_allgather",
+        side_effect=mock_process_allgather,
+    ):
+        for batch in ds_shard.iter_jax_batches(named_sharding=sharding, batch_size=4):
+            arr = batch["features"]
+            assert arr.sharding == sharding
+            batches.append(arr.shape)
+
+    train.report(
+        {
+            "worker_id": rank,
+            "batches": batches,
+            "dp_size": dp_size,
+            "tp_size": tp_size,
+            "num_global_devices": num_global_devices,
+        }
+    )
+
+
+@pytest.mark.skipif(
+    sys.version_info >= (3, 12),
+    reason="Current jax version (0.4.13) is not supported in python 3.12+",
+)
+def test_multi_host_data_iterator_replicated(ray_tpu_multi_host, tmp_path):
+    actor_name = "test_multi_host_data_iterator_replicated"
+    verify_actor = VerificationActor.options(name=actor_name).remote()
+
+    import numpy as np
+
+    import ray
+    from ray.train import DataConfig
+
+    # Create 16 rows. Each row has "features" of shape (8,).
+    ds = ray.data.range(16).map(lambda r: {"features": np.ones(8), "id": r["id"]})
+
+    trainer = JaxTrainer(
+        train_loop_per_worker=train_func_replicated,
+        scaling_config=ScalingConfig(
+            use_tpu=True,
+            accelerator_type="TPU-V4",
+            topology="2x2x2",
+            num_workers=4,
+        ),
+        datasets={"train": ds},
+        dataset_config=DataConfig(datasets_to_split=[]),
+        run_config=RunConfig(
+            storage_path=str(tmp_path),
+            callbacks=[CustomMetricsCallback(actor_name)],
+            worker_runtime_env={
+                "env_vars": {
+                    "JAX_PLATFORMS": "cpu",
+                    "XLA_FLAGS": "--xla_force_host_platform_device_count=4",
+                }
+            },
+        ),
+    )
+    result = trainer.fit()
+    assert result.error is None
+
+    # Fetch metrics result from each worker using the verification actor.
+    reports = ray.get(verify_actor.get_reports.remote())
+
+    assert len(reports) == 4
+
+    for r in reports:
+        dp_size = r["dp_size"]
+        # Global batch size = local_bs (4) * dp_size.
+        expected_global_bs = 4 * dp_size
+
+        # Each worker sees 16 / dp_size rows.
+        # If dp_size = 2, each shard has 8 rows.
+        # With local batch_size = 4, each shard (8 rows) has 2 batches.
+        assert len(r["batches"]) == 2
+
+        for batch_shape in r["batches"]:
+            # Global shape is (global_bs, 8)
+            assert batch_shape == (expected_global_bs, 8)
 
 
 def test_scaling_config_validation():

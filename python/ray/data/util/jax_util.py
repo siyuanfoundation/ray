@@ -1,6 +1,44 @@
-from typing import Any, Dict, Iterable, Iterator, Union
+from typing import Any, Dict, Iterable, Iterator, Optional, Union
 
 import numpy as np
+
+
+def get_data_parallelism(
+    sharding: Optional["jax.sharding.NamedSharding"],  # noqa: F821
+) -> int:
+    """Returns the data parallelism degree from the named sharding.
+
+    This is defined as the number of shards along the first dimension (batch dimension).
+    """
+    import jax
+    from jax.sharding import NamedSharding
+
+    if sharding is None:
+        return jax.device_count()
+
+    if not isinstance(sharding, NamedSharding):
+        return 1
+
+    mesh = sharding.mesh
+    spec = sharding.spec
+    if not spec:
+        return 1
+
+    batch_spec = spec[0]
+    if batch_spec is None:
+        return 1
+
+    if isinstance(batch_spec, str):
+        return mesh.shape[batch_spec]
+
+    if isinstance(batch_spec, (list, tuple)):
+        dp = 1
+        for axis in batch_spec:
+            if axis is not None:
+                dp *= mesh.shape[axis]
+        return dp
+
+    return 1
 
 
 def _convert_ndarray_to_jax_tensor(
@@ -10,73 +48,77 @@ def _convert_ndarray_to_jax_tensor(
 
     local_batch_size = ndarray.shape[0]
 
-    # Validate rank
+    # Validate rank and handle partial sharding for columns with fewer dimensions.
     if named_sharding:
+        from jax.sharding import NamedSharding, PartitionSpec
+
         partition_spec = named_sharding.spec
         if len(partition_spec) > len(ndarray.shape):
-            raise ValueError(
-                f"PartitionSpec {partition_spec} defines sharding for {len(partition_spec)} "
-                f"dimensions, but the input tensor only has {len(ndarray.shape)} dimensions "
-                f"(shape: {ndarray.shape})."
+            # If the PartitionSpec has more dimensions than the array,
+            # we truncate it to match the array's rank.
+            # This allows 1D columns (like 'id') to still be sharded or replicated
+            # even when a 2D or 3D sharding is provided for the batch.
+            new_spec = partition_spec[: len(ndarray.shape)]
+            named_sharding = NamedSharding(
+                named_sharding.mesh, PartitionSpec(*new_spec)
             )
+            partition_spec = named_sharding.spec
 
-    # Ray Data partitions objects equally across the total number of hosts/workers
-    # operating in the DataParallelTrainer (along the batch / 0-th dimension).
-    # Since the input subset of records `ndarray` is exactly this host's 1D chunk,
-    # we first create a JAX array matching this exact physical row-sharding.
     import jax
     from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
-    global_devices = jax.devices()
-    host_count = jax.process_count()
+    num_hosts = jax.process_count()
+    data_parallelism = get_data_parallelism(named_sharding)
 
-    # 1. Physical Sharding (1D across the batch dimension)
-    # The full global_devices list is used to create a 1D mesh across all processes.
-    physical_mesh = Mesh(np.array(global_devices), ("batch",))
-    physical_sharding = NamedSharding(physical_mesh, PartitionSpec("batch"))
+    if named_sharding is None:
+        # Default sharding: 1D across all devices
+        global_devices = jax.devices()
+        mesh = Mesh(np.array(global_devices), ("batch",))
+        named_sharding = NamedSharding(mesh, PartitionSpec("batch"))
+        data_parallelism = len(global_devices)
 
-    # Global shape assumes each host gets the exact same local batch size.
-    global_shape = (local_batch_size * host_count,) + ndarray.shape[1:]
+    # Calculate global batch size.
+    if data_parallelism % num_hosts == 0:
+        global_batch_size = local_batch_size * num_hosts
+    elif num_hosts % data_parallelism == 0:
+        global_batch_size = local_batch_size * data_parallelism
+    else:
+        # Fallback to assuming purely data parallel across all hosts
+        global_batch_size = local_batch_size * num_hosts
 
-    # Use index map to deterministically place local chunks onto correct devices
-    device_indices_map = physical_sharding.addressable_devices_indices_map(global_shape)
+    global_shape = (global_batch_size,) + ndarray.shape[1:]
 
-    # when a tensor is wholly assigned to a single device instead of being partitioned, addressable_devices_indices_map returns slice(None, None, None) for that dimension instead of concrete indices.
-    # This is a workaround to handle this case.
+    # Ray Data provides the full set of features (columns) on each host.
+    # However, jax.make_array_from_process_local_data requires the input array
+    # to match the shape of the global shard addressable by the current process.
+    # We slice the ndarray to the process-addressable region.
+    device_indices_map = named_sharding.addressable_devices_indices_map(global_shape)
+
+    # Find the bounding box of indices for all local devices.
     def get_slice_start(sl: slice) -> int:
         return 0 if sl.start is None else sl.start
 
     def get_slice_stop(sl: slice, length: int) -> int:
         return length if sl.stop is None else sl.stop
 
-    host_start_index = min(
-        get_slice_start(idx[0]) for idx in device_indices_map.values()
-    )
-
-    arrays = []
-    for device, index in device_indices_map.items():
-        # Translate the global row-sharding index to this host's local ndarray slice
-        start = get_slice_start(index[0])
-        stop = get_slice_stop(index[0], global_shape[0])
-        local_slice = slice(
-            start - host_start_index,
-            stop - host_start_index,
-            index[0].step,
+    process_slices = []
+    for d in range(len(global_shape)):
+        start = min(get_slice_start(idx[d]) for idx in device_indices_map.values())
+        stop = max(
+            get_slice_stop(idx[d], global_shape[d])
+            for idx in device_indices_map.values()
         )
-        local_index = (local_slice,) + index[1:]
-        arrays.append(jax.device_put(ndarray[local_index], device))
+        process_slices.append(slice(start, stop))
 
-    # Construct the globally aware 1D array
-    physical_array = jax.make_array_from_single_device_arrays(
-        global_shape, physical_sharding, arrays
-    )
+    # For the batch dimension (dim 0), the process-addressable slice is relative
+    # to the global batch size. However, the input `ndarray` already contains
+    # exactly the local rows for this process.
+    # Thus, we translate the global batch slice to a local 0-indexed slice.
+    # For all other dimensions (features), we slice the ndarray as-is.
+    local_process_slices = [slice(None)] + process_slices[1:]
+    ndarray = ndarray[tuple(local_process_slices)]
 
-    if named_sharding:
-        # 2. Reshard to the user's exact requested target sharding (e.g. 2D / 3D)
-        # JAX will automatically manage the NCCL all-to-all communications to reshuffle
-        # the 1D chunks into the target N-dimensional layout.
-        return jax.device_put(physical_array, named_sharding)
-    return physical_array
+    return jax.make_array_from_process_local_data(named_sharding, ndarray, global_shape)
 
 
 def _convert_ndarray_batch_to_jax_tensor_batch(
@@ -143,7 +185,14 @@ def jax_sync_generator(
     """
     import jax
 
-    num_local_devices = jax.local_device_count()
+    num_hosts = jax.process_count()
+    data_parallelism = get_data_parallelism(named_sharding)
+
+    # Divisor for the local batch size.
+    # The local batch size must be divisible by the number of unique shards
+    # handled by the current host.
+    divisor = max(1, data_parallelism // num_hosts)
+
     iterator = iter(batch_iterable)
     while True:
         has_batch = True
@@ -159,7 +208,7 @@ def jax_sync_generator(
             local_batch_size = 0
             batch = None
 
-        if jax.process_count() > 1:
+        if num_hosts > 1:
             import jax.numpy as jnp
             from jax.experimental.multihost_utils import process_allgather
 
@@ -188,6 +237,20 @@ def jax_sync_generator(
                         "set `drop_last=True` in `iter_jax_batches()`."
                     )
 
+            # In Case 3 (hosts % dp == 0), several hosts provide the same data.
+            # They MUST provide the SAME batch size.
+            if num_hosts % data_parallelism == 0 and num_hosts > data_parallelism:
+                num_hosts_per_shard = num_hosts // data_parallelism
+                for i in range(data_parallelism):
+                    shard_batch_sizes = gathered[
+                        i * num_hosts_per_shard : (i + 1) * num_hosts_per_shard, 1
+                    ]
+                    if not (shard_batch_sizes == shard_batch_sizes[0]).all():
+                        raise ValueError(
+                            f"Hosts responsible for shard {i} produced different batch sizes: "
+                            f"{shard_batch_sizes}. They must provide identical data."
+                        )
+
             min_batch_size = int(gathered[:, 1].min())
             max_batch_size = int(gathered[:, 1].max())
             # Fail all workers if any worker has a different batch size
@@ -202,15 +265,14 @@ def jax_sync_generator(
         else:
             min_batch_size = local_batch_size
 
-        if min_batch_size % num_local_devices != 0:
+        if min_batch_size % divisor != 0:
             if drop_last:
-                # Align the minimum batch size to be divisible by the number of local devices
-                min_batch_size = min_batch_size - (min_batch_size % num_local_devices)
+                # Align the minimum batch size to be divisible by the calculated divisor
+                min_batch_size = min_batch_size - (min_batch_size % divisor)
             else:
                 raise ValueError(
                     f"The globally minimum batch size ({min_batch_size}) must be evenly "
-                    f"divisible by the number of local JAX devices "
-                    f"({num_local_devices}) on this host. "
+                    f"divisible by the required divisor ({divisor}) for the given sharding. "
                     f"To safely truncate the batch to a divisible size, "
                     f"set `drop_last=True` in `iter_jax_batches()`."
                 )

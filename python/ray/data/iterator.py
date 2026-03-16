@@ -626,6 +626,7 @@ class DataIterator(abc.ABC):
         drop_last: bool = False,
         local_shuffle_buffer_size: Optional[int] = None,
         local_shuffle_seed: Optional[int] = None,
+        _already_sharded: bool = False,
     ) -> Iterable[Union["jax.Array", Dict[str, "jax.Array"]]]:  # noqa: F821
         """Return a batched iterable of JAX Arrays over the dataset.
 
@@ -647,6 +648,8 @@ class DataIterator(abc.ABC):
             drop_last: Whether to drop the last batch if incomplete.
             local_shuffle_buffer_size: Minimum rows for local in-memory shuffle.
             local_shuffle_seed: Seed for local random shuffle.
+            _already_sharded: Internal flag to indicate that the dataset is already
+                sharded.
 
         Returns:
             An iterable over JAX Array batches.
@@ -654,13 +657,66 @@ class DataIterator(abc.ABC):
 
         import jax
 
-        num_local_devices = jax.local_device_count()
+        from ray.data.util.jax_util import get_data_parallelism, jax_sync_generator
 
-        if batch_size is not None and batch_size % num_local_devices != 0:
+        num_hosts = jax.process_count()
+        data_parallelism = get_data_parallelism(named_sharding)
+
+        # Divisor for the local batch size.
+        # The local batch size must be divisible by the number of unique shards
+        # handled by the current host.
+        divisor = max(1, data_parallelism // num_hosts)
+
+        from ray import train
+
+        try:
+            in_train_worker = train.get_context() is not None
+        except Exception:
+            in_train_worker = False
+
+        if (
+            not _already_sharded
+            and num_hosts > 1
+            and num_hosts % data_parallelism == 0
+            and num_hosts > data_parallelism
+        ):
+            # Only perform automatic re-sharding if we have access to the base dataset.
+            base_ds = getattr(self, "_base_dataset", None)
+            if base_ds is not None:
+                # In Ray Train workers, Ray Data automatically excludes training
+                # resources from its execution budget. When we do a nested execution
+                # (by calling split() and then iterator()), we might hit negative
+                # resource limits if we don't clear the exclusion temporarily.
+                ctx = base_ds.context
+                old_exclude = ctx.execution_options.exclude_resources
+                if in_train_worker:
+                    from ray.data._internal.execution.interfaces.execution_options import (
+                        ExecutionResources,
+                    )
+
+                    ctx.execution_options.exclude_resources = ExecutionResources.zero()
+
+                try:
+                    shard_index = jax.process_index() // (num_hosts // data_parallelism)
+                    new_ds = base_ds.split(data_parallelism, equal=True)[shard_index]
+                    return new_ds.iterator().iter_jax_batches(
+                        named_sharding=named_sharding,
+                        prefetch_batches=prefetch_batches,
+                        batch_size=batch_size,
+                        drop_last=drop_last,
+                        local_shuffle_buffer_size=local_shuffle_buffer_size,
+                        local_shuffle_seed=local_shuffle_seed,
+                        _already_sharded=True,
+                    )
+                finally:
+                    if in_train_worker:
+                        ctx.execution_options.exclude_resources = old_exclude
+
+        if batch_size is not None and batch_size % divisor != 0:
             raise ValueError(
                 f"The provided batch_size ({batch_size}) must be evenly "
-                f"divisible by the number of local JAX devices "
-                f"({num_local_devices}) on this host."
+                f"divisible by the required divisor ({divisor}) for the "
+                "given sharding on this host. "
             )
 
         # Directly Fetch the underlying blocks as NumPy arrays.
@@ -672,8 +728,6 @@ class DataIterator(abc.ABC):
             local_shuffle_buffer_size=local_shuffle_buffer_size,
             local_shuffle_seed=local_shuffle_seed,
         )
-
-        from ray.data.util.jax_util import jax_sync_generator
 
         return jax_sync_generator(
             batch_iterable,
