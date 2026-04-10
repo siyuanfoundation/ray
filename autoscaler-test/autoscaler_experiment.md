@@ -2,10 +2,10 @@
 
 ## Instructions
 
-We are testing the behavior of ray autoscaler where there are multiple worker groups to scale up. 
+We are testing the behavior of ray autoscaler where there are multiple worker groups to scale up.
 My understanding is that the autoscaler code under `ray/python/ray/autoscaler` picks the workergroup that scores the highest, and if there are multiple worker groups with the same highest score, it picks the one that comes first in the manifest. This assumption is based on my reading of the code, but it may not be true. I want to verify that is always the case.
 
-I have deployed a ray cluster with ray-autoscaler-cluster.yaml. The cluster has 2 identical worker groups except the name. 
+I have deployed a ray cluster with ray-autoscaler-cluster.yaml. The cluster has 2 identical worker groups except the name.
 I want to see if ray autoscaler always scale up the 1st worker group deterministically when the 2 groups have the same score.
 
 You can trigger cluster scaling up by creating detached actors like the following examples:
@@ -135,6 +135,3 @@ Even when a cluster is already running with workers from a previously "first" gr
 
 **Final Conclusion**:
 Ray Autoscaler (v2) uses a stable sorting mechanism that relies on the order of worker groups defined in the `RayCluster` manifest. The group that appears first in the `workerGroupSpecs` list will always be the preferred choice for scaling up when all other scoring factors are equal.
-
-
-
