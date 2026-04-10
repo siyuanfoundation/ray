@@ -1,85 +1,80 @@
-# Enhance Ray Autoscaler to Set Relative Priority Order for Worker Groups
+# Design Doc: Priority-Aware Worker Group Selection in Ray Autoscaler v2
+
+## Introduction
+
+This document proposes an enhancement to the Ray Autoscaler (v2) to support explicit priority-based selection for worker groups. The goal is to provide users with granular control over which worker groups are preferred for scale-up operations when multiple groups satisfy the same resource demands.
 
 ## Problem Statement
 
-Currently, Ray Autoscaler v2 does not support setting relative priority order for worker groups. When multiple worker groups have the same highest score, the autoscaler picks the first one in the manifest. 
+The Ray Autoscaler (v2) currently employs a deterministic tie-breaking mechanism: when multiple worker groups yield the same utilization score, it selects the first group encountered in the `workerGroupSpecs` manifest. While functional, this approach presents several limitations:
 
-This is not always the desired behavior. For example, some worker groups might be added later (with `kubectl ray plugin`) to the cluster and we might want to prioritize the newer worker groups over the older ones. 
+1.  **Lack of Explicit Priority Control**: Users cannot define a preference hierarchy for worker groups offering similar resources (e.g., prioritizing "On-Demand" over "Spot" when cost is not the primary factor, or vice-versa).
+2.  **Manifest Order Dependency**: The selection logic is implicitly tied to the order of elements in the manifest. This is fragile and difficult to manage when worker groups are added or removed dynamically (e.g., via `kubectl ray` plugins).
+3.  **Ineffective Fallback Recovery**: If a preferred group experiences a temporary allocation failure, it is penalized. Under the current implementation, this penalty can become effectively permanent; even after the preferred group recovers, a secondary group with a "perfect" (zero-failure) record will always be chosen over it, regardless of the user's actual preference.
 
-One other scenario we need to support is: we always prefer to use group 1 over group 2 if group 1 has resources available. But if group 1 is temporarily out of resources, ray cluster will fallback to group 2. With current implementation, once group 1 is out of resources, it will penalized later, and if group 2 never has failed scaling event, group 1 will never be picked again over group 2 even if group 1 has resources available later. 
+## Goals
 
-## Proposed Solution
+*   Introduce an explicit, user-configurable `priority` field for worker groups.
+*   Ensure that higher-priority groups are preferred for scaling when utilization scores are tied.
+*   Implement a standardized recovery window that allows penalized groups to return to a "ready" state after a failure.
+*   Preserve failure recency as a final tie-breaker to maintain deterministic behavior among equal-priority groups.
 
-We would like introduce a new optional `priority` field to the worker group spec. The priority is a non-negative integer, and the higher the priority, the more preferred the worker group is. It will be used as a tie-breaker when multiple worker groups have the same highest score. The existing penalty logic of recent scaling up failures should still be there, but a worker group with higher priority should be have the penalty reduced to 0 or positive after a while to retry. 
+## Proposed Design
 
-## Detailed Design
-
-To support relative priority order for worker groups, we will make changes across the configuration schema, the scheduler's node selection logic, and the cloud resource monitor's penalty mechanism.
+The solution involves making `priority` a first-class attribute in the autoscaler's scheduling and scoring logic.
 
 ### 1. Configuration Schema Changes
 
-We will introduce an optional `priority` field to the worker group specification.
+The `priority` field will be introduced as an optional non-negative integer.
 
-- **KubeRay CRD**: Add `priority` (int) to `workerGroupSpecs`.
-- **Python Autoscaler Schema**:
-    - Update `NodeTypeConfig` in `python/ray/autoscaler/v2/instance_manager/config.py` to include a `priority: int = 0` field.
-    - Update `SchedulingNode` in `python/ray/autoscaler/v2/scheduler.py` to store the `priority` of its node type.
+*   **RayCluster CRD**: The `workerGroupSpecs` will include an optional `priority` field (defaulting to 0).
+*   **Python Autoscaler**:
+    *   `NodeTypeConfig` will be updated to store the `priority` parsed from the cluster configuration.
+    *   `SchedulingNode` will carry this `priority` to the scheduler.
 
-### 2. Priority-Aware Node Selection
+### 2. Multi-Level Node Selection Logic
 
-The `ResourceDemandScheduler` will use a 4-level sorting key to select the "best" node. This ensures that priority acts as a deterministic tie-breaker after recovery status is accounted for.
-
-In `python/ray/autoscaler/v2/scheduler.py`, the `_sched_best_node` method will be updated:
+The `ResourceDemandScheduler` will be updated to use a 4-level sorting key for selecting the optimal node for a resource request. The key is evaluated in descending order of importance (higher value is better):
 
 ```python
-# Sort the results by a multi-level key (higher is better for all levels):
 results = sorted(
     results,
     key=lambda r: (
-        r.score,                                              # 1. Utilization score
-        recoverable_availabilities.get(r.node.node_type, 1.0), # 2. Common recovery status (0.0 to 1.0)
-        r.node.priority,                                      # 3. User-defined priority
-        original_availabilities.get(r.node.node_type, 1.0),    # 4. Original recency-based score
+        r.score,                                              # 1. Resource Utilization
+        recoverable_availabilities.get(r.node.node_type, 1.0), # 2. Recovery Status (0.0 to 1.0)
+        r.node.priority,                                      # 3. Administrative Priority
+        cloud_resource_availabilities.get(r.node.node_type, 1.0), # 4. Failure Recency
     ),
     reverse=True,
 )
 ```
 
-**Selection Logic**:
-1. **Utilization**: Pick the node that schedules the most requests.
-2. **Recovery Status**: If tied, pick the node that has progressed further in its "recovery" from the last failure. All node types use the same recovery slope.
-3. **Priority**: If recovery status is equal (e.g., both have fully recovered to 1.0, or both have never failed), pick the one with the higher user-defined priority.
-4. **Historical Recency**: If priorities are also equal, use the original `get_resource_availabilities()` score. This ensures that the node that failed longest ago (or never) is preferred.
+**Selection Hierarchy**:
+1.  **Utilization**: The primary goal remains maximizing the number of scheduled requests per node.
+2.  **Recovery Status**: Nodes that have transitioned out of a failure penalty window (recovered to `1.0`) are preferred. All nodes follow a uniform recovery slope.
+3.  **Administrative Priority**: Among "ready" nodes, the one with the highest user-defined `priority` is selected.
+4.  **Failure Recency**: If all other factors are equal, the node with the oldest failure (or no failure) is chosen. This is calculated via the existing recency-based scoring, ensuring backward compatibility.
 
-### 3. Penalty Recovery
+### 3. Penalty and Recovery Mechanism
 
-We will enhance `CloudResourceMonitor` by adding a new `get_recoverable_resource_availabilities` function. This function uses a uniform recovery slope for all node types.
+The `CloudResourceMonitor` will be enhanced to provide two distinct views of resource availability:
 
-- **Recovery Window**: `RAY_AUTOSCALER_AVAILABILITY_RECOVERY_S` (default: 60s).
-- **Safety Floor**: `RAY_AUTOSCALER_MIN_RETRY_INTERVAL_S` (default: 5s).
-- **Score**: `0.0` if `t < Floor`, else `min(1.0, t / Window)`.
+#### Priority-Neutral Recovery Slope
+A new function, `get_recoverable_resource_availabilities`, will calculate a continuous recovery score from 0.0 to 1.0.
 
-```python
-def get_recoverable_resource_availabilities(self) -> Dict[NodeType, float]:
-    now = time.time()
-    scores = {}
-    for node_type, last_fail in self._last_unavailable_timestamp.items():
-        t = now - last_fail
-        if t < MIN_RETRY_INTERVAL:
-            scores[node_type] = 0.0
-        else:
-            # Uniform recovery slope for all groups
-            scores[node_type] = min(1.0, t / RECOVERY_WINDOW)
-    return scores
-```
+*   **Recovery Window**: Controlled by the `RAY_AUTOSCALER_AVAILABILITY_RECOVERY_S` environment variable (default: 60s). This is the window during which the score linearly recovers from `0.0` to `1.0`.
+*   **Safety Floor**: A hard 5-second window (or 10% of the recovery window) during which the score remains `0.0` to prevent rapid re-launching after a failure.
+*   **Formula**: `score = 0.0` if `t < Safety Floor`, else `min(1.0, t / RAY_AUTOSCALER_AVAILABILITY_RECOVERY_S)`.
 
-### 4. Implementation Steps
+#### Failure Recency Logic
+The existing `get_resource_availabilities` logic (to be exposed as `cloud_resource_availabilities`) remains unchanged. It provides a relative ranking based on the global most-recent failure. This ensures that even after the recovery window has passed, a node that failed 10 minutes ago is still preferred over a node that failed 2 minutes ago, provided they have the same priority.
 
-1. **Update `NodeTypeConfig`**: Add `priority: int = 0` field.
-2. **Modify `SchedulingNode`**: Store `priority` from its node type.
-3. **Enhance `CloudResourceMonitor`**: Add `get_recoverable_resource_availabilities` with a uniform slope.
-4. **Update `ResourceDemandScheduler`**: Implement the 4-level sorting key in `_sched_best_node`, utilizing both the new recovery score and the original recency score.
-5. **KubeRay Integration**: Expose `priority` in the `RayCluster` CRD and ensure it is propagated to the autoscaler.
+## Implementation Plan
 
-#### Existing Function: `get_resource_availabilities` (Unchanged)
-This remains as the historical tie-breaker, ensuring that more recent failures always have a lower relative score than older ones, even after both have fully "recovered" in the slope-based model.
+1.  **Schema Update**: Add `priority` to `NodeTypeConfig` in `python/ray/autoscaler/v2/instance_manager/config.py`.
+2.  **Data Propagation**: Update `SchedulingNode` in `python/ray/autoscaler/v2/scheduler.py` to include the `priority` field.
+3.  **Monitor Enhancement**:
+    *   Rename `get_resource_availabilities` to `get_recency_resource_availabilities`.
+    *   Implement `get_recoverable_resource_availabilities` using `RAY_AUTOSCALER_AVAILABILITY_RECOVERY_S`.
+4.  **Scheduler Update**: Refactor `_sched_best_node` in `python/ray/autoscaler/v2/scheduler.py` to utilize the new 4-level sorting key.
+5.  **Integration**: Update the KubeRay operator to expose the `priority` field in the `RayCluster` CRD and pass it to the autoscaler.
