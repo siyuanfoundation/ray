@@ -18,9 +18,11 @@ The Ray Autoscaler (v2) currently employs a deterministic tie-breaking mechanism
 *   **Backward Compatibility**:
     *   Keep the current computation of the [utilization score](https://github.com/ray-project/ray/blob/f9ccc7a79ee4535a5575551687e193c003e6c7f9/python/ray/autoscaler/v2/scheduler.py#L476) unchanged.
     *   Preserve the default behavior when no priority is specified (i.e., priority defaults to 0).
-*   **Availability Prioritized**:
-    * Favor available groups over high-priority failing ones, while providing a recovery window for penalized groups.
     * When availability is equal, prefer higher priority groups.
+*   **Scheduling Constraints**:
+    As we are introducing resource priority, we should also allow users to specify priority constraints for their resource requests to avoid scheduling on specific worker groups. For example, users may want to avoid scheduling long running tasks on DWS worker groups.
+    *   Allow users to specify `min_priority` and `max_priority` for resource requests to avoid scheduling on specific worker groups.
+    *   Treat priority limits as hard constraints for node feasibility.
 
 ## Proposed Design
 
@@ -39,30 +41,69 @@ The `priority` field will be introduced as an optional non-negative integer.
     *   `NodeTypeConfig` will be updated to store the `priority` parsed from the cluster configuration.
     *   `SchedulingNode` will carry this `priority` to the scheduler.
 
-### 2. Multi-Level Node Selection Logic
+### 2. Priority-Based Scheduling Constraints
 
-The `ResourceDemandScheduler` will be updated to use a 4-level sorting key for selecting the optimal node for a resource request. The key is evaluated in descending order of importance (higher value is better):
+Users can optionally specify priority constraints for their resource requests (e.g., in a `scheduling_strategy`).
+
+*   **Min Priority**: The request will only be scheduled on nodes with `priority >= min_priority`.
+*   **Max Priority**: The request will only be scheduled on nodes with `priority <= max_priority`.
+
+These constraints allow for scenarios such as "never run this high-priority task on low-priority spot instances" or "avoid using expensive high-priority nodes for this non-critical background task".
+
+#### User-Facing API Design
+To expose these constraints to users, new fields will be added to Ray's scheduling strategies and placement group APIs.
+
+##### Tasks and Actors
+A new `PrioritySchedulingStrategy` will be introduced in `ray.util.scheduling_strategies`:
 
 ```python
-results = sorted(
-    results,
-    key=lambda r: (
-        r.score,                                              # 1. Resource Utilization
-        recoverable_availabilities.get(r.node.node_type, 1.0), # 2. Recoverable Availability (0.0 to 1.0)
-        r.node.priority,                                      # 3. Administrative Priority
-        cloud_resource_availabilities.get(r.node.node_type, 1.0), # 4. Failure Recency
-    ),
-    reverse=True,
+from ray.util.scheduling_strategies import PrioritySchedulingStrategy
+
+# Schedule on nodes with priority between 10 and 50
+@ray.remote(scheduling_strategy=PrioritySchedulingStrategy(min_priority=10, max_priority=50))
+def my_task():
+    pass
+
+# Actor with priority constraints
+actor = MyActor.options(
+    scheduling_strategy=PrioritySchedulingStrategy(min_priority=5)
+).remote()
+```
+
+##### Placement Groups
+The `ray.util.placement_group` API will be updated to accept priority constraints either globally or per bundle:
+
+```python
+# Global constraints for all bundles in the PG
+pg = ray.util.placement_group(
+    bundles=[{"CPU": 1}, {"CPU": 1}],
+    strategy="SPREAD",
+    min_priority=10
+)
+
+# Per-bundle constraints (Experimental)
+pg = ray.util.placement_group(
+    bundles=[{"CPU": 1}],
+    bundle_priority_constraints=[{"min_priority": 10, "max_priority": 50}]
 )
 ```
 
-**Selection Hierarchy**:
-1.  **Utilization**: The primary goal remains maximizing the number of scheduled requests per node.
-2.  **Recoverable Availability**: Nodes that have transitioned out of a failure penalty window (recovered to `1.0`) are preferred. All nodes follow a uniform recovery slope.
-3.  **Administrative Priority**: Among "ready" nodes, the one with the highest user-defined `priority` is selected.
-4.  **Failure Recency**: If all other factors are equal, the node with the oldest failure (or no failure) is chosen. This is calculated via the existing recency-based scoring (`cloud_resource_availabilities`), ensuring backward compatibility.
+### 3. Multi-Level Node Selection Logic
 
-### 3. Penalty and Recovery Mechanism
+The node selection process will be updated to include a two-stage evaluation:
+
+#### Stage 1: Feasibility Filtering
+Before scoring nodes, the scheduler will filter out any candidate nodes that do not satisfy the priority constraints of the request. A node is feasible only if:
+`request.min_priority <= node.priority <= request.max_priority`
+
+#### Stage 2: 4-Level Scoring
+Feasible nodes are then evaluated using a 4-level sorting key (higher value is better):
+...
+2.  **Recoverable Availability**: Nodes that have transitioned out of a failure penalty window (recovered to `1.0`) are preferred. All nodes follow a uniform recovery slope.
+3.  **Administrative Priority**: Among "ready" nodes, the one with the highest user-defined `priority` is selected. This allows for fine-grained preference even when utilization and availability are equal.
+4.  **Failure Recency**: If all other factors are equal, the node with the oldest failure (or no failure) is chosen.
+
+### 4. Penalty and Recovery Mechanism
 
 The `CloudResourceMonitor` will be enhanced to provide two distinct views of resource availability:
 
@@ -79,12 +120,15 @@ The existing `get_resource_availabilities` logic (exposed as `cloud_resource_ava
 ## Implementation Plan
 
 1.  **Schema Update**: Add `priority` to `NodeTypeConfig` in `python/ray/autoscaler/v2/instance_manager/config.py`.
-2.  **Data Propagation**: Update `SchedulingNode` in `python/ray/autoscaler/v2/scheduler.py` to include the `priority` field.
-3.  **Monitor Enhancement**:
+2.  **Request Constraints**: Update `ResourceRequest` and `GangResourceRequest` (and associated SDKs) to include `min_priority` and `max_priority`.
+3.  **Data Propagation**: Update `SchedulingNode` and `SchedulingRequest` in `python/ray/autoscaler/v2/scheduler.py` to include and carry the `priority` and availability scores.
+4.  **Monitor Enhancement**:
     *   Expose existing logic as `cloud_resource_availabilities`.
-    *   Implement `get_recoverable_resource_availabilities` using `RAY_AUTOSCALER_AVAILABILITY_RECOVERY_S`.
-4.  **Scheduler Update**: Refactor `_sched_best_node` in `python/ray/autoscaler/v2/scheduler.py` to utilize the new 4-level sorting key.
-5.  **Integration**: Update the KubeRay operator to expose the `priority` field in the `RayCluster` CRD and pass it to the autoscaler.
+    *   Implement `get_recoverable_resource_availabilities` using `RAY_AUTOSCALER_AVAILABILITY_RECOVERY_S` with a linear recovery slope and safety floor.
+5.  **Scheduler Update**:
+    *   Implement feasibility filtering in `_try_schedule_one` to enforce `min_priority` and `max_priority`.
+    *   Refactor `_sched_best_node` to utilize the new 4-level sorting key (Utilization, Recoverable Availability, Priority, Failure Recency).
+6.  **Integration**: Update the KubeRay operator to expose the `priority` field in the `RayCluster` CRD and pass it to the autoscaler.
 
 ## Testing Plan
 
@@ -96,6 +140,8 @@ To ensure the reliability and correctness of the priority-aware selection logic,
     *   Verify score reaches `0.5` at 300s and `1.0` at 600s (with default 600s window).
 *   **Sorting Logic**: Test `_sched_best_node` in `test_scheduler.py` with mock data:
     *   **Tie-breaking**: Two node types with identical resources and recovery scores. Verify the one with higher `priority` is chosen.
+    *   **Priority Constraints**: Verify a request with `min_priority=10` is not scheduled on a node with `priority=5`.
+    *   **Priority Constraints**: Verify a request with `max_priority=5` is not scheduled on a node with `priority=10`.
     *   **Fallback**: High-priority group with recovery score `< 1.0` vs. Low-priority group with recovery score `= 1.0`. Verify the low-priority group is chosen.
     *   **Recency**: Two groups with same priority and recovery score `= 1.0`. Verify the one with a higher historical availability score (older failure) is chosen.
 
