@@ -90,7 +90,7 @@ def train_func():
 
 # Define the TPU scaling configuration.
 scaling_config = ScalingConfig(
-    num_workers=1,
+    num_workers=1, # 2~3 workers does not work because of _validate_tpu_config
     use_tpu=True,
     resources_per_worker={"TPU": 4},
     accelerator_type="TPU-V6E",
