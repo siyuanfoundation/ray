@@ -390,6 +390,57 @@ autoscalerOptions:
       value: "5"
 ```
 
+### 6. Worker Group Priority (Autoscaler v2)
+
+To give users granular control over which worker groups are preferred for scale-up operations when multiple groups satisfy the same resource demands (e.g., preferring On-Demand over Spot), you can configure a `priority` for each worker group in `workerGroupSpecs`.
+
+* **`priority`**: An optional non-negative integer (defaults to 0). Higher numbers indicate higher priority.
+
+> [!NOTE]
+> This priority setting only affects autoscaling decisions (node scale-up preferences). It does not affect or impact Ray workload scheduling (task, actor, or placement group placement). The priority values are evaluated in relative terms; the absolute value of the priority does not carry any inherent meaning.
+
+When the autoscaler determines that multiple worker groups yield the same resource utilization for pending tasks, it evaluates candidate groups using a strict four-level deterministic selection hierarchy:
+
+1. **Utilization**: Maximize resource utilization first.
+2. **Recoverable Availability**: Prefer nodes that are currently available or have recovered from failures.
+3. **Priority**: Prefer higher-priority nodes when utilization and availability are equal.
+4. **Failure Recency**: Use historical failure recency as the final tie-breaker.
+
+#### Configuration Example
+
+```yaml
+workerGroupSpecs:
+- groupName: high-priority-worker-group
+  priority: 10
+  template:
+    spec:
+      containers:
+      - name: ray-worker
+        resources:
+          limits:
+            cpu: "1"
+            memory: "1G"
+          requests:
+            cpu: "1"
+            memory: "1G"
+- groupName: low-priority-worker-group
+  priority: 0
+  template:
+    spec:
+      containers:
+      - name: ray-worker
+        resources:
+          limits:
+            cpu: "1"
+            memory: "1G"
+          requests:
+            cpu: "1"
+            memory: "1G"
+```
+
+This priority configuration is defined at the `workerGroupSpecs` level in the `RayCluster` CRD. The KubeRay operator passes this priority field to the Python Autoscaler. The Python Autoscaler parses it into `NodeTypeConfig` and propagates it through `SchedulingNode` to the autoscaler's scheduling and scoring logic.
+
+
 ## Next steps
 
 See [(Advanced) Understanding the Ray Autoscaler in the Context of Kubernetes](ray-k8s-autoscaler-comparison) for more details about the relationship between the Ray Autoscaler and Kubernetes autoscalers.
