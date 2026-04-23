@@ -10,7 +10,9 @@ The Ray Autoscaler (v2) currently employs a deterministic tie-breaking mechanism
 
 1.  **Lack of Explicit Priority Control**: Users cannot define an explicit preference hierarchy for worker groups offering similar resources (e.g., prioritizing "On-Demand" over "Spot" when cost is not the primary factor, or vice-versa).
 2.  **Manifest Order Dependency**: The selection logic is implicitly tied to the order of elements in the manifest, and it is not officially documented. This is difficult to manage when worker groups are added or removed dynamically (e.g., via `kubectl ray` plugins). It is also fragile and can lead to unexpected behavior when the implementation details change.
-3.  **Ineffective Fallback Recovery**: If a preferred group experiences a temporary allocation failure, it is penalized. Under the [current implementation](https://github.com/ray-project/ray/blob/f9ccc7a79ee4535a5575551687e193c003e6c7f9/python/ray/autoscaler/v2/instance_manager/subscribers/cloud_resource_monitor.py#L62-L73), this penalty never goes to 0, so it can become effectively permanent; even after the preferred group recovers, a secondary group with a "perfect" (zero-failure) record will always be chosen over it, regardless of the user's actual preference.
+3.  **Obscure Traceability**: Even though an implicit order exists based on manifest placement, it is exceptionally difficult for users to track exactly why a specific worker group is chosen for scale-up, and how that selection logic changes unexpectedly if the manifest ordering is modified (e.g., during edits or plugin updates).
+4.  **Ineffective Fallback Recovery**: If a preferred group experiences a temporary allocation failure, it is penalized. Under the [current implementation](https://github.com/ray-project/ray/blob/f9ccc7a79ee4535a5575551687e193c003e6c7f9/python/ray/autoscaler/v2/instance_manager/subscribers/cloud_resource_monitor.py#L62-L73), this penalty never goes to 0, so it can become effectively permanent; even after the preferred group recovers, a secondary group with a "perfect" (zero-failure) record will always be chosen over it, regardless of the user's actual preference.
+
 
 ## Requirements
 
@@ -18,10 +20,21 @@ The Ray Autoscaler (v2) currently employs a deterministic tie-breaking mechanism
 *   **Backward Compatibility**:
     *   Keep the current computation of the [utilization score](https://github.com/ray-project/ray/blob/f9ccc7a79ee4535a5575551687e193c003e6c7f9/python/ray/autoscaler/v2/scheduler.py#L476) unchanged.
     *   Preserve the default behavior when no priority is specified (i.e., priority defaults to 0).
-    * When availability is equal, prefer higher priority groups.
+*   **Scope & Limitations**:
+    *   **Autoscaling Decisions Only**: This only affects autoscaling decisions (node scale-up preferences) and does not affect or impact Ray workload scheduling (task, actor, or placement group placement).
+    *   **Relative Evaluation Only**: Priority values are evaluated in relative terms to one another; the absolute value of the priority does not carry any inherent meaning.
+    *   **No Mathematical Weighting**: The priority number is not mathematically weighted into the autoscaler's scoring mechanism; it is strictly used as a discrete tie-breaking step when multiple candidate worker groups offer identical resources and yield equal utilization scores.
 
+
+
+## Expected Behavior and User Impact
+
+- **Explicit Fallbacks**: If a high-priority group fails to allocate pods (e.g., due to cloud quota limits or Spot availability constraints), the autoscaler will seamlessly fall back to the next available worker group in the priority hierarchy.
+- **Transparent Operation**: Users can expect the priority value to be explicitly visible in autoscaler logs during scale-up decision tracing.
+- **No Disruption to Active Workloads**: Modifying the priority in a live cluster manifest will not trigger an eviction or restarts of currently running nodes.
 
 ## Proposed Design
+
 
 The solution involves making `priority` a first-class attribute in the autoscaler's scheduling and scoring logic. The Deterministic Selection Hierarchy for choosing worker groups for scale-up will follow these strict, deterministic orders:
 1. **Utilization**: Maximize resource utilization first.
@@ -37,6 +50,41 @@ The `priority` field will be introduced as an optional non-negative integer.
 *   **Python Autoscaler**:
     *   `NodeTypeConfig` will be updated to store the `priority` parsed from the cluster configuration.
     *   `SchedulingNode` will carry this `priority` to the scheduler.
+
+
+
+
+#### Configuration Example
+
+```yaml
+workerGroupSpecs:
+- groupName: high-priority-worker-group
+  priority: 10
+  template:
+    spec:
+      containers:
+      - name: ray-worker
+        resources:
+          limits:
+            cpu: "1"
+            memory: "1G"
+          requests:
+            cpu: "1"
+            memory: "1G"
+- groupName: low-priority-worker-group
+  priority: 0
+  template:
+    spec:
+      containers:
+      - name: ray-worker
+        resources:
+          limits:
+            cpu: "1"
+            memory: "1G"
+          requests:
+            cpu: "1"
+            memory: "1G"
+```
 
 ### 2. Multi-Level Node Selection Logic
 

@@ -397,7 +397,8 @@ To give users granular control over which worker groups are preferred for scale-
 * **`priority`**: An optional non-negative integer (defaults to 0). Higher numbers indicate higher priority.
 
 > [!NOTE]
-> This priority setting only affects autoscaling decisions (node scale-up preferences). It does not affect or impact Ray workload scheduling (task, actor, or placement group placement). The priority values are evaluated in relative terms; the absolute value of the priority does not carry any inherent meaning.
+> This priority setting only affects autoscaling decisions (node scale-up preferences). It does not affect or impact Ray workload scheduling (task, actor, or placement group placement). The priority values are evaluated in relative terms; the absolute value of the priority does not carry any inherent meaning. Furthermore, the priority number is not mathematically weighted into the autoscaler's scoring mechanism; it is strictly used as a discrete tie-breaking step when multiple candidate worker groups offer identical resources and yield equal utilization scores.
+
 
 When the autoscaler determines that multiple worker groups yield the same resource utilization for pending tasks, it evaluates candidate groups using a strict four-level deterministic selection hierarchy:
 
