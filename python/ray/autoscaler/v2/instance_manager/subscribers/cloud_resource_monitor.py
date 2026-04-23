@@ -2,6 +2,7 @@ import logging
 import time
 from typing import Dict, List
 
+from ray._private.ray_constants import env_integer
 from ray.autoscaler.v2.instance_manager.instance_manager import (
     InstanceUpdatedSubscriber,
 )
@@ -9,6 +10,11 @@ from ray.autoscaler.v2.schema import NodeType
 from ray.core.generated.instance_manager_pb2 import Instance, InstanceUpdateEvent
 
 logger = logging.getLogger(__name__)
+
+# The window during which the score linearly recovers from 0.0 to 1.0.
+RAY_AUTOSCALER_AVAILABILITY_RECOVERY_S = env_integer(
+    "RAY_AUTOSCALER_AVAILABILITY_RECOVERY_S", 600
+)
 
 
 class CloudResourceMonitor(InstanceUpdatedSubscriber):
@@ -71,3 +77,26 @@ class CloudResourceMonitor(InstanceUpdatedSubscriber):
                     1 - self._last_unavailable_timestamp[node_type] / max_ts
                 )
         return resource_availability_scores
+
+    def get_recoverable_resource_availabilities(self) -> Dict[NodeType, float]:
+        """Calculate a continuous recovery score from 0.0 to 1.0.
+
+        score = 0.0 if (current_time - last_unavailable_timestamp) < Safety Floor,
+        else min(1.0, (current_time - last_unavailable_timestamp) /
+        RAY_AUTOSCALER_AVAILABILITY_RECOVERY_S).
+        """
+        recovery_scores: Dict[NodeType, float] = {}
+        current_time = time.time()
+
+        # Safety floor is 10s or 10% of recovery window.
+        safety_floor = min(10, RAY_AUTOSCALER_AVAILABILITY_RECOVERY_S * 0.1)
+
+        for node_type, last_ts in self._last_unavailable_timestamp.items():
+            diff = current_time - last_ts
+            if diff < safety_floor:
+                recovery_scores[node_type] = 0.0
+            else:
+                recovery_scores[node_type] = min(
+                    1.0, diff / RAY_AUTOSCALER_AVAILABILITY_RECOVERY_S
+                )
+        return recovery_scores
