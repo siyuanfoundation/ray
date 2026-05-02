@@ -1,0 +1,75 @@
+apiVersion: ray.io/v1
+kind: RayCluster
+metadata:
+  name: ray-tpu-multihost-cluster
+spec:
+  headGroupSpec:
+    rayStartParams: {}
+    template:
+      spec:
+        serviceAccountName: ray-ksa
+        containers:
+        - name: ray-head
+          image: <your_ray_image>
+          env:
+          - name: RAY_TRAIN_V2_ENABLED
+            value: "1"
+          - name: HF_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: hf-secret
+                key: hf_token
+                optional: true
+          imagePullPolicy: Always
+          resources:
+            limits:
+              memory: "48Gi"
+            requests:
+              cpu: "12"
+              memory: "48Gi"
+          ports:
+          - containerPort: 6379
+            name: gcs
+          - containerPort: 8265
+            name: dashboard
+          - containerPort: 10001
+            name: client
+          - containerPort: 8000
+            name: serve
+          - containerPort: 8888
+            name: grpc
+  workerGroupSpecs:
+  - groupName: tpu-group
+    replicas: 1
+    maxReplicas: 1
+    numOfHosts: 4
+    groupName: tpu-group
+    rayStartParams: {}
+    template:
+      spec:
+        serviceAccountName: ray-ksa
+        containers:
+        - name: ray-worker
+          image: <your_ray_image>
+          imagePullPolicy: Always
+          resources:
+            limits:
+              google.com/tpu: "4"
+              memory: 200G
+            requests:
+              cpu: "50"
+              google.com/tpu: "4"
+              memory: 200G
+          env:
+          - name: RAY_TRAIN_V2_ENABLED
+            value: "1"
+          - name: HF_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: hf-secret
+                key: hf_token
+                optional: true
+        nodeSelector:
+          cloud.google.com/gke-tpu-accelerator: tpu-v6e-slice
+          cloud.google.com/gke-tpu-topology: 4x4
+          cloud.google.com/gke-flex-start: "true"
