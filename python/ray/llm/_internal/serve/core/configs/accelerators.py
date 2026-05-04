@@ -254,11 +254,18 @@ class TPUAccelerator(AcceleratorBackend):
         return True
 
     def get_remote_options(self, accelerator_type_str: str = None):
-        # TPUs use custom resource strings rather than a native kwarg
-        options: Dict[str, Any] = {"resources": {"TPU": 0.001}}
+        # TPUs use custom resource strings rather than a native kwarg.
+        # We avoid requesting fractional "TPU" resources as Ray enforces
+        # integer configurations for the base TPU resource.
+        options: Dict[str, Any] = {"resources": {}}
 
         if accelerator_type_str:
             options["accelerator_type"] = accelerator_type_str
+            # Use the custom accelerator type resource as a scheduling hint.
+            options["resources"][
+                format_ray_accelerator_resource(accelerator_type_str)
+            ] = 0.001
+
         return options
 
     def shutdown(self):
