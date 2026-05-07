@@ -1,5 +1,5 @@
 # to test the script
-# ray job submit --address="http://127.0.0.1:8265" --working-dir ./torch_tpu -- python dist_train_example.py
+# ray job submit --address="http://127.0.0.1:8265" --working-dir ./torch_tpu -- python dist_train_example_v7.py
 #
 import os
 
