@@ -147,6 +147,24 @@ def _setup_torch_process_group(
     elif _is_backend_tpu(backend):
         from torch_tpu import api
 
+        from ray._private.accelerators import TPUAcceleratorManager
+
+        is_v7 = os.environ.get("TPU_ACCELERATOR_TYPE", "").startswith("tpu7x")
+
+        if is_v7:
+            visible_chips_var = (
+                TPUAcceleratorManager.get_visible_accelerator_ids_env_var()
+            )
+            current_visible = os.environ.get(visible_chips_var, "0")
+            # Assume single chip visible for now as per the 0.5 request
+            chip_id = int(current_visible.split(",")[0])
+            chiplet_id = 2 * chip_id + (world_rank % 2)
+
+            os.environ[visible_chips_var] = str(chiplet_id)
+            logger.info(
+                f"Hacked {visible_chips_var} to {chiplet_id} for rank {world_rank}"
+            )
+
         api.tpu_device()
 
     dist.init_process_group(
