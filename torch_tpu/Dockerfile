@@ -30,3 +30,4 @@ WORKDIR torchtpu-vllm
 RUN pip install --upgrade pip && SETUPTOOLS_SCM_PRETEND_VERSION=0.19.0 VLLM_TARGET_DEVICE="tpu" pip install -e ../vllm
 RUN pip uninstall -y torchvision
 RUN pip install --pre -e .
+RUN pip install --pre torch_tpu==0.1.1.dev20260423092951
