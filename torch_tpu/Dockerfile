@@ -20,14 +20,14 @@ ENV PIP_INDEX_URL="https://oauth2accesstoken:${AUTH_TOKEN}@us-python.pkg.dev/ml-
 
 ARG GITHUB_USER
 ARG GITHUB_TOKEN
-RUN git clone --depth 1 --branch v0.19.0 https://github.com/vllm-project/vllm.git
-RUN git clone https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/google-pytorch/torchtpu-vllm.git
-# Patch vLLM's TPU requirements to accept our local workspace in torchtpu-vllm instead of overriding it
-RUN sed -i '/tpu-inference/d' vllm/requirements/tpu.txt
+# RUN git clone --depth 1 --branch v0.19.0 https://github.com/vllm-project/vllm.git
+# RUN git clone https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/google-pytorch/torchtpu-vllm.git
+# # Patch vLLM's TPU requirements to accept our local workspace in torchtpu-vllm instead of overriding it
+# RUN sed -i '/tpu-inference/d' vllm/requirements/tpu.txt
 
-# Install vLLM in editable mode (forcing the 0.17.1 base version to prevent .dev prerelease mismatch during dependency resolution)
-WORKDIR torchtpu-vllm
-RUN pip install --upgrade pip && SETUPTOOLS_SCM_PRETEND_VERSION=0.19.0 VLLM_TARGET_DEVICE="tpu" pip install -e ../vllm
-RUN pip uninstall -y torchvision
-RUN pip install --pre -e .
+# # Install vLLM in editable mode (forcing the 0.17.1 base version to prevent .dev prerelease mismatch during dependency resolution)
+# WORKDIR torchtpu-vllm
+# RUN pip install --upgrade pip && SETUPTOOLS_SCM_PRETEND_VERSION=0.19.0 VLLM_TARGET_DEVICE="tpu" pip install -e ../vllm
+# RUN pip uninstall -y torchvision
+# RUN pip install --pre -e .
 RUN pip install --pre torch_tpu==0.1.1.dev20260423092951

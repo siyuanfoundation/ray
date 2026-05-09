@@ -1,5 +1,5 @@
 # to test the script
-# ray job submit --address="http://127.0.0.1:8265" --working-dir ./torch_tpu -- python dist_train_example.py
+# ray job submit --address="http://127.0.0.1:8265" --working-dir ./torch_tpu -- python dist_train_example_v7.py
 #
 import os
 
@@ -76,7 +76,7 @@ if __name__ == "__main__":
         topology="2x2x1",
         accelerator_type="TPU-V7X",
         placement_strategy="PACK",
-        resources_per_worker={"TPU": 0.5},
+        resources_per_worker={"TPU": 1},
     )
 
     # Initialize TorchTrainer with the dataset

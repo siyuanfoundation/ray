@@ -59,7 +59,7 @@ def train_linear_regression():
         if (epoch + 1) % 20 == 0:
             print(f"Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.4f}")
         final_loss = loss.item()
-
+    time.sleep(60)
     # Final parameters
     for name, param in model.named_parameters():
         print(f"Final Parameters: {name}: {param.data}")
@@ -69,8 +69,9 @@ def train_linear_regression():
 if __name__ == "__main__":
     ray.init()
     start_time = time.time()
-    task = train_linear_regression.remote()
-    final_loss = ray.get(task)
+    num_tpus = 8
+    tasks = [train_linear_regression.remote() for _ in range(num_tpus)]
+    final_losses = ray.get(tasks)
     end_time = time.time()
     print(f"Time taken: {end_time - start_time}")
-    print(f"Final loss: {final_loss}")
+    print(f"Final losses: {final_losses}")
