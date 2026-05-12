@@ -8,8 +8,7 @@ ADD . ray
 RUN python ray/python/ray/setup-dev.py --skip=serve -y
 
 RUN sudo apt-get update && sudo apt-get install -y libopenblas-base libopenmpi-dev libomp-dev
-RUN pip uninstall -y torch
-RUN pip uninstall -y scipy
+RUN pip uninstall -y torch torchvision scipy
 
 RUN pip install keyrings.google-artifactregistry-auth
 RUN pip install pandas==2.3.3
@@ -28,5 +27,7 @@ RUN sed -i '/tpu-inference/d' vllm/requirements/tpu.txt
 # Install vLLM in editable mode (forcing the 0.17.1 base version to prevent .dev prerelease mismatch during dependency resolution)
 WORKDIR torchtpu-vllm
 RUN pip install --upgrade pip && SETUPTOOLS_SCM_PRETEND_VERSION=0.19.0 VLLM_TARGET_DEVICE="tpu" pip install -e ../vllm
-RUN pip uninstall -y torchvision
 RUN pip install --pre -e .
+
+# Freeze torch_tpu version until head is fixed
+RUN pip install --pre torchvision torch_tpu==0.1.1.dev20260423092951

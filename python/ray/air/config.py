@@ -193,6 +193,8 @@ class ScalingConfig:
                 # scheduling contention. Generally nodes have many more CPUs than
                 # GPUs, so not requesting a CPU does not lead to oversubscription.
                 resources_per_worker = {"GPU": 1}
+            elif self.use_tpu:
+                resources_per_worker = {"TPU": 1}
             else:
                 resources_per_worker = {"CPU": 1}
         else:
@@ -202,6 +204,8 @@ class ScalingConfig:
 
         if self.use_gpu:
             resources_per_worker.setdefault("GPU", 1)
+        elif self.use_tpu:
+            resources_per_worker.setdefault("TPU", 1)
 
         if self.accelerator_type:
             accelerator = f"{RESOURCE_CONSTRAINT_PREFIX}{self.accelerator_type}"

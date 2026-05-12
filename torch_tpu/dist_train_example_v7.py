@@ -8,10 +8,9 @@ import pandas as pd
 import torch.nn as nn
 from torch.optim import SGD
 
-from torch_tpu import api
-
 import ray
 import ray.data
+import ray.train.torch
 from ray import train
 from ray.train import ScalingConfig
 from ray.train.torch import TorchTrainer
@@ -20,11 +19,6 @@ from ray.train.torch import TorchTrainer
 def train_func():
     rank = os.environ["RANK"]
     world_size = os.environ["WORLD_SIZE"]
-    tpu_device = api.tpu_device()
-    print(
-        f"Rank {rank}: Device type: {tpu_device.type}, Device index:"
-        f" {tpu_device.index if tpu_device.index is not None else 'default'}"
-    )
     # print all TPU related environment variables
     print(f"TPU related environment variables on Rank {rank}/{world_size}:")
     for env_var in os.environ:
@@ -35,7 +29,7 @@ def train_func():
     model = nn.Linear(1, 1)
 
     # Prepare model for distributed training
-    model.to("tpu")
+    model = ray.train.torch.prepare_model(model)
 
     criterion = nn.MSELoss()
     optimizer = SGD(model.parameters(), lr=0.01)
@@ -69,7 +63,7 @@ if __name__ == "__main__":
     df = pd.DataFrame({"x": x, "y": y})
     dataset = ray.data.from_pandas(df)
 
-    # Scaling configuration for CPU training
+    # Scaling configuration for TPU training
     scaling_config = ScalingConfig(
         use_tpu=True,
         num_workers=8,

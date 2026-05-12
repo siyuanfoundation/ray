@@ -145,9 +145,9 @@ def _setup_torch_process_group(
     elif backend == "hccl":
         register_custom_torch_dist_backend(backend)
     elif _is_backend_tpu(backend):
-        from torch_tpu import api
-
-        api.tpu_device()
+        # torch env vars needs to be set before torch_tpu import
+        _set_torch_distributed_env_vars()
+        register_custom_torch_dist_backend(backend)
 
     dist.init_process_group(
         backend=backend,

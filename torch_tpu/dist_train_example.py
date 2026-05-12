@@ -28,7 +28,7 @@ def train_func():
     model = nn.Linear(1, 1)
 
     # Prepare model for distributed training
-    model.to("tpu")
+    model = ray.train.torch.prepare_model(model)
 
     criterion = nn.MSELoss()
     optimizer = SGD(model.parameters(), lr=0.01)
@@ -62,14 +62,14 @@ if __name__ == "__main__":
     df = pd.DataFrame({"x": x, "y": y})
     dataset = ray.data.from_pandas(df)
 
-    # Scaling configuration for CPU training
+    # Scaling configuration for TPU training
     scaling_config = ScalingConfig(
         use_tpu=True,
         num_workers=8,
         topology="2x4",
         accelerator_type="TPU-V6E",
         placement_strategy="PACK",
-        resources_per_worker={"TPU": 1},
+        # resources_per_worker={"TPU": 1},
     )
 
     # Initialize TorchTrainer with the dataset
