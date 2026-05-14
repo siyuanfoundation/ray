@@ -29,5 +29,5 @@ WORKDIR torchtpu-vllm
 RUN pip install --upgrade pip && SETUPTOOLS_SCM_PRETEND_VERSION=0.19.0 VLLM_TARGET_DEVICE="tpu" pip install -e ../vllm
 RUN pip install --pre -e .
 
-# Freeze torch_tpu version until head is fixed
-RUN pip install --pre torchvision torch_tpu==0.1.1.dev20260423092951
+# Last tested torch_tpu version:
+# RUN pip install --pre torch_tpu==0.1.1.dev20260512095200
