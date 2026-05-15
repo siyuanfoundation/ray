@@ -349,6 +349,7 @@ class TPUAcceleratorManager(AcceleratorManager):
         Returns:
             The number of TPUs if any were detected, otherwise 0.
         """
+        TPUAcceleratorManager.inject_torch_tpu_env_vars()
         accel_files = glob.glob("/dev/accel*")
         if accel_files:
             return len(accel_files)
@@ -454,7 +455,8 @@ class TPUAcceleratorManager(AcceleratorManager):
         ):
             return
 
-        is_v7 = environ.get("TPU_ACCELERATOR_TYPE", "").startswith("tpu7x")
+        accel_type = environ.get("TPU_ACCELERATOR_TYPE", "").lower()
+        is_v7 = "7x" in accel_type or "v7" in accel_type
         if is_v7:
             logger.info("Detected TPU v7")
 
@@ -519,6 +521,7 @@ class TPUAcceleratorManager(AcceleratorManager):
         ]
         torch_tpu_topology = ",".join(map(str, new_tpu_host_bounds))
         if is_v7:
+            # V7 requires a ',2' suffix to indicate 2 cores per chip.
             torch_tpu_topology += ",2"
         environ["TORCH_TPU_TOPOLOGY"] = torch_tpu_topology
 
@@ -534,7 +537,10 @@ class TPUAcceleratorManager(AcceleratorManager):
             for port in ports:
                 tpu_worker_addresses.append(f"{tpu_worker_hostname}:{port}")
         environ["TORCH_TPU_SLICEBUILDER_ADDRESSES"] = ",".join(tpu_worker_addresses)
-
+        logger.info(
+            f"setting torch tpu env vars: TORCH_TPU_TOPOLOGY={environ['TORCH_TPU_TOPOLOGY']}, "
+            f"TORCH_TPU_SLICEBUILDER_ADDRESSES={environ['TORCH_TPU_SLICEBUILDER_ADDRESSES']}"
+        )
         return
 
     @staticmethod

@@ -13,26 +13,22 @@ def main():
             model_id="my-model",
             model_source="Qwen/Qwen3-0.6B",
         ),
-        accelerator_type="TPU-V6E",
-        # accelerator_config=dict(
-        #     kind="tpu",
-        #     topology="2x4",
-        # ),
-        # placement_group_config=dict(
-        #     strategy="PACK",
-        #     bundles=[{"TPU": 8}],
-        # ),
+        accelerator_type="TPU-V7X",
+        placement_group_config=dict(
+            strategy="PACK",
+            bundles=[{"TPU": 0.5}] * 8,
+        ),
         deployment_config=dict(
             autoscaling_config=dict(
                 min_replicas=1,
                 max_replicas=1,
             ),
             ############# Key Change ###############
-            ray_actor_options={"resources": {"TPU": 1}, "num_gpus": 0},
+            ray_actor_options={"num_gpus": 0},
         ),
         runtime_env=dict(env_vars={"HF_TOKEN": os.environ.get("HF_TOKEN")}),
         engine_kwargs={
-            "tensor_parallel_size": 1,
+            "tensor_parallel_size": 8,
             "max_model_len": 256,
             "max_num_batched_tokens": 256,
         },

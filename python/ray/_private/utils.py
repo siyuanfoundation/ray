@@ -273,7 +273,18 @@ def set_visible_accelerator_ids() -> Mapping[str, Optional[str]]:
     environment variables based on the accelerator runtime. Return the original
     environment variables.
     """
+    from ray._private.accelerators import get_accelerator_manager_for_resource
     from ray._private.ray_constants import env_bool
+
+    # Ensure TPU environment variables are set if we're on a TPU node.
+    # This is a temporary workaround for Ray Serve orchestrators:
+    # They run on the same node as TPU workers but don't explicitly
+    # request TPU resources. Consequently, Ray's automatic injection
+    # is skipped. Manual injection ensures libraries like torch_xla
+    # can initialize PJRT correctly in the orchestrator process.
+    tpu_manager = get_accelerator_manager_for_resource("TPU")
+    if tpu_manager:
+        tpu_manager.inject_torch_tpu_env_vars()
 
     original_visible_accelerator_env_vars = {}
     override_on_zero = env_bool(
@@ -286,11 +297,11 @@ def set_visible_accelerator_ids() -> Mapping[str, Optional[str]]:
         # If no accelerator ids are set, skip overriding the environment variable.
         if not override_on_zero and len(accelerator_ids) == 0:
             continue
-        env_var = ray._private.accelerators.get_accelerator_manager_for_resource(
+        env_var = get_accelerator_manager_for_resource(
             resource_name
         ).get_visible_accelerator_ids_env_var()
         original_visible_accelerator_env_vars[env_var] = os.environ.get(env_var, None)
-        ray._private.accelerators.get_accelerator_manager_for_resource(
+        get_accelerator_manager_for_resource(
             resource_name
         ).set_current_process_visible_accelerator_ids(accelerator_ids)
 
