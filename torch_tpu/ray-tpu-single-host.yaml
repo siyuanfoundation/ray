@@ -1,0 +1,67 @@
+apiVersion: ray.io/v1
+kind: RayCluster
+metadata:
+  name: ray-tpu-singlehost-cluster
+spec:
+  headGroupSpec:
+    rayStartParams: {}
+    template:
+      spec:
+        serviceAccountName: ray-ksa
+        containers:
+          - name: ray-head
+            image: <your_ray_image>
+            imagePullPolicy: Always
+            env:
+            - name: RAY_TRAIN_V2_ENABLED
+              value: "1"
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-secret
+                  key: hf_token
+                  optional: true
+            ports:
+              - containerPort: 8265  # Dashboard
+              - containerPort: 10001 # Client
+              - containerPort: 8888  # gRPC
+              - containerPort: 8000  # OpenAI API
+            resources:
+              limits:
+                memory: "48Gi"
+              requests:
+                cpu: "12"
+                memory: "48Gi"
+  workerGroupSpecs:
+    - replicas: 1
+      numOfHosts: 1
+      groupName: tpu-group
+      rayStartParams: {}
+      template:
+        spec:
+          serviceAccountName: ray-ksa
+          containers:
+            - name: ray-worker
+              image: <your_ray_image>
+              imagePullPolicy: Always
+              resources:
+                limits:
+                  memory: "200Gi"
+                  google.com/tpu: "8"
+                requests:
+                  cpu: "48"
+                  memory: "200Gi"
+                  google.com/tpu: "8"
+              env:
+                - name: RAY_TRAIN_V2_ENABLED
+                  value: "1"
+                - name: HF_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: hf-secret
+                      key: hf_token
+                      optional: true
+          nodeSelector:
+            cloud.google.com/gke-tpu-accelerator: tpu-v6e-slice
+            cloud.google.com/gke-tpu-topology: 2x4
+            cloud.google.com/gke-flex-start: "true"
