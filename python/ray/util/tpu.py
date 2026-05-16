@@ -44,6 +44,9 @@ def get_tpu_version_from_type(accelerator_type: str) -> str:
     else:
         version = accel_type_lower
 
+    # If it's a pod type like v4-32 or v7x-8, extract the base version.
+    version = version.split("-")[0]
+
     if version not in VALID_TPU_TYPES:
         raise ValueError(
             f"Invalid accelerator_type: {accelerator_type}. "
@@ -51,6 +54,15 @@ def get_tpu_version_from_type(accelerator_type: str) -> str:
         )
 
     return version
+
+
+def _get_tpu_resource_multiplier(accelerator_version: str) -> int:
+    import os
+
+    if os.environ.get("RAY_TPU_V7_RESOURCE_IS_CORES", "").lower() == "true":
+        if "v7" in accelerator_version.lower() or "7x" in accelerator_version.lower():
+            return 2
+    return 1
 
 
 @PublicAPI(stability="alpha")
@@ -163,11 +175,12 @@ def get_tpu_worker_resources(
         - unit_resources: The resource dictionary for a single worker.
     """
     accelerator_version = get_tpu_version_from_type(accelerator_type)
+    multiplier = _get_tpu_resource_multiplier(accelerator_version)
 
-    resolved_chips_per_vm = chips_per_vm or get_chips_per_host(
-        topology, accelerator_version
-    )
-    total_chips_per_slice = get_num_chips_from_topology(topology)
+    resolved_chips_per_vm = (
+        chips_per_vm or get_chips_per_host(topology, accelerator_version)
+    ) * multiplier
+    total_chips_per_slice = get_num_chips_from_topology(topology) * multiplier
 
     total_chips_available = total_chips_per_slice * num_slices
 
@@ -299,7 +312,10 @@ def get_num_ready_tpu_slices(
         if not pod_type:
             return 0
 
-        total_chips_expected = get_num_chips_from_topology(topology)
+        multiplier = _get_tpu_resource_multiplier(
+            get_tpu_version_from_type(accelerator_type)
+        )
+        total_chips_expected = get_num_chips_from_topology(topology) * multiplier
         if total_chips_expected <= 0:
             return 0
 
@@ -387,7 +403,10 @@ def get_num_tpu_slices(
 
     try:
         pod_type = infer_tpu_pod_type_from_topology(topology, accelerator_type)
-        total_chips_expected = get_num_chips_from_topology(topology)
+        multiplier = _get_tpu_resource_multiplier(
+            get_tpu_version_from_type(accelerator_type)
+        )
+        total_chips_expected = get_num_chips_from_topology(topology) * multiplier
     except Exception as e:
         logger.warning(f"Failed to parse TPU topology for integrity check: {e}")
         return 0

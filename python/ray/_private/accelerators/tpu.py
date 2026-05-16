@@ -142,9 +142,13 @@ def _get_tpu_metadata(key: str) -> Optional[str]:
 
 
 def _accelerator_type_check(accelerator_type: str):
-    if not accelerator_type.startswith(VALID_TPU_TYPES):
+    normalized = accelerator_type.lower()
+    if normalized.startswith("tpu"):
+        normalized = "v" + normalized[3:]
+
+    if not normalized.startswith(VALID_TPU_TYPES):
         raise ValueError(
-            f"Invalid accelerator type: {accelerator_type}. Must start with one of: {VALID_TPU_TYPES}"
+            f"Invalid accelerator type: {accelerator_type}. Must start with one of: {VALID_TPU_TYPES} or 'tpu' followed by one of those."
         )
 
 
