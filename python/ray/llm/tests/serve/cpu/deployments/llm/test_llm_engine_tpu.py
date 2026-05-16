@@ -308,5 +308,26 @@ def test_tpu_serve_deployment_explicit_host_level_bundles(ray_tpu_cluster):
     serve.shutdown()
 
 
+def test_tpu_accelerator_get_remote_options():
+    """
+    Verifies that TPUAccelerator correctly generates remote options,
+    avoiding fractional TPU resource requests that Ray rejects.
+    """
+    config = TPUConfig(kind="tpu")
+    accelerator = TPUAccelerator(config)
+
+    # Test with accelerator_type_str provided: should use custom resource hint
+    options = accelerator.get_remote_options(accelerator_type_str="TPU-V6E")
+    assert options["accelerator_type"] == "TPU-V6E"
+    assert "TPU" not in options["resources"]
+    assert options["resources"]["accelerator_type:TPU-V6E"] == 0.001
+
+    # Test without accelerator_type_str: should not request any TPU resources
+    options_no_type = accelerator.get_remote_options(accelerator_type_str=None)
+    assert "accelerator_type" not in options_no_type
+    assert "TPU" not in options_no_type["resources"]
+    assert len(options_no_type["resources"]) == 0
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main(["-v", __file__]))
