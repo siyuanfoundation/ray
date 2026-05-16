@@ -69,8 +69,9 @@ def train_linear_regression():
 if __name__ == "__main__":
     ray.init()
     start_time = time.time()
-    task = train_linear_regression.remote()
-    final_loss = ray.get(task)
+    num_tasks = 4
+    tasks = [train_linear_regression.remote() for _ in range(num_tasks)]
+    final_losses = ray.get(tasks)
     end_time = time.time()
     print(f"Time taken: {end_time - start_time}")
-    print(f"Final loss: {final_loss}")
+    print(f"Final loss: {final_losses}")

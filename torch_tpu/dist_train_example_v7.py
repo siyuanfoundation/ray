@@ -70,7 +70,7 @@ if __name__ == "__main__":
         topology="2x2x1",
         accelerator_type="TPU-V7X",
         placement_strategy="PACK",
-        resources_per_worker={"TPU": 0.5},
+        resources_per_worker={"TPU": 1},
     )
 
     # Initialize TorchTrainer with the dataset

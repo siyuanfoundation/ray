@@ -10,11 +10,15 @@ spec:
         serviceAccountName: ray-ksa
         containers:
           - name: ray-head
-            image: <your_ray_image>
+            image: us-east5-docker.pkg.dev/tpu-vm-gke-testing/sizhang-repo/ray-torch-tpu:v7
             imagePullPolicy: Always
             env:
             - name: RAY_TRAIN_V2_ENABLED
               value: "1"
+            - name: RAY_TPU_RESOURCE_IS_CORES
+              value: "True"
+            - name: RAY_STORAGE_PATH
+              value: "gs://sizhang-tpu-us-east5/ray-experimental"
             - name: HF_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -36,13 +40,14 @@ spec:
     - replicas: 1
       numOfHosts: 1
       groupName: tpu-group
-      rayStartParams: {}
+      rayStartParams:
+        resources: '"{\"TPU\": 8}"'
       template:
         spec:
           serviceAccountName: ray-ksa
           containers:
             - name: ray-worker
-              image: <your_ray_image>
+              image: us-east5-docker.pkg.dev/tpu-vm-gke-testing/sizhang-repo/ray-torch-tpu:v7
               imagePullPolicy: Always
               resources:
                 limits:
@@ -55,6 +60,10 @@ spec:
               env:
                 - name: RAY_TRAIN_V2_ENABLED
                   value: "1"
+                - name: RAY_TPU_RESOURCE_IS_CORES
+                  value: "True"
+                - name: RAY_STORAGE_PATH
+                  value: "gs://sizhang-tpu-us-east5/ray-experimental"
                 - name: HF_TOKEN
                   valueFrom:
                     secretKeyRef:

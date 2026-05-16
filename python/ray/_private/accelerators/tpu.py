@@ -142,9 +142,13 @@ def _get_tpu_metadata(key: str) -> Optional[str]:
 
 
 def _accelerator_type_check(accelerator_type: str):
-    if not accelerator_type.startswith(VALID_TPU_TYPES):
+    normalized = accelerator_type.lower()
+    if normalized.startswith("tpu"):
+        normalized = "v" + normalized[3:]
+
+    if not normalized.startswith(VALID_TPU_TYPES):
         raise ValueError(
-            f"Invalid accelerator type: {accelerator_type}. Must start with one of: {VALID_TPU_TYPES}"
+            f"Invalid accelerator type: {accelerator_type}. Must start with one of: {VALID_TPU_TYPES} or 'tpu' followed by one of those."
         )
 
 
@@ -568,14 +572,26 @@ class TPUAcceleratorManager(AcceleratorManager):
         num_accelerators_on_node = (
             TPUAcceleratorManager.get_current_node_num_accelerators()
         )
+
+        accel_type = (
+            TPUAcceleratorManager.get_current_node_tpu_pod_type() or ""
+        ).lower()
+        is_v7 = "7x" in accel_type or "v7" in accel_type
+        is_cores_mode = env_bool("RAY_TPU_RESOURCE_IS_CORES", False)
+
         if num_visible_tpu_chips == num_accelerators_on_node:
             # Let the ML framework use the defaults
             os.environ.pop(TPU_CHIPS_PER_HOST_BOUNDS_ENV_VAR, None)
             os.environ.pop(TPU_HOST_BOUNDS_ENV_VAR, None)
             return
+
         os.environ[
             TPUAcceleratorManager.get_visible_accelerator_ids_env_var()
         ] = ",".join([str(i) for i in visible_tpu_chips])
+
+        if is_v7 and is_cores_mode:
+            logger.info("detected v7 core mode")
+
         if num_visible_tpu_chips == 1:
             os.environ[
                 TPU_CHIPS_PER_HOST_BOUNDS_ENV_VAR
