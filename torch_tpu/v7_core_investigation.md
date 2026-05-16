@@ -1,0 +1,3 @@
+## Problem Statement
+
+ In v7 TPU, there are 2 cores per TPU chip. for example for a `2x2x1` toplogy in v7, there are 4 tpus, 8 tpu cores. For torch_tpu, 1 TPU really mean 1 core. So I made some changes in the last commit to make the resource count of TPU in ray count 2 cores in v7 as 2 TPUs. When I ran @torch_tpu/single_tpu_train_example.py with 4 tasks, 1 TPU per task it succeeded. But when I changed it to 4 tasks * 2 TPU per task, or 8 tasks * 1 TPU per task, both times I got the error: "pjrt_state.cc:247] PjrtBackend::GetClient failed to initialize: FAILED_PRECONDITION: GetPjrtClient failed: TPU initialization failed: No TPU devices found after filtering [repeated 3x across cluster]"

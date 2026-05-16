@@ -142,9 +142,13 @@ def _get_tpu_metadata(key: str) -> Optional[str]:
 
 
 def _accelerator_type_check(accelerator_type: str):
-    if not accelerator_type.startswith(VALID_TPU_TYPES):
+    normalized = accelerator_type.lower()
+    if normalized.startswith("tpu"):
+        normalized = "v" + normalized[3:]
+
+    if not normalized.startswith(VALID_TPU_TYPES):
         raise ValueError(
-            f"Invalid accelerator type: {accelerator_type}. Must start with one of: {VALID_TPU_TYPES}"
+            f"Invalid accelerator type: {accelerator_type}. Must start with one of: {VALID_TPU_TYPES} or 'tpu' followed by one of those."
         )
 
 
@@ -205,7 +209,19 @@ def infer_tpu_pod_type_from_topology(
         return None
     try:
         num_chips = get_num_chips_from_topology(topology)
-        generation = accelerator_type.lower().replace("tpu-", "")
+
+        # Normalize accelerator_type to get generation
+        accel_type_lower = accelerator_type.lower()
+        if accel_type_lower.startswith("tpu-"):
+            generation = accel_type_lower.replace("tpu-", "")
+        elif accel_type_lower.startswith("tpu"):
+            generation = "v" + accel_type_lower[3:]
+        else:
+            generation = accel_type_lower
+
+        # Strip suffix if any (e.g. v4-32 -> v4, tpu7x-8 -> v7x)
+        generation = generation.split("-")[0]
+
         num_cores = num_chips * get_tpu_cores_per_chip(generation)
 
         return f"{generation}-{num_cores}"
@@ -563,6 +579,12 @@ class TPUAcceleratorManager(AcceleratorManager):
         TPUAcceleratorManager.inject_torch_tpu_env_vars()
         if env_bool(NOSET_TPU_VISIBLE_CHIPS_ENV_VAR, False):
             return
+
+        is_v7 = env_bool("RAY_TPU_V7_RESOURCE_IS_CORES", False) and os.environ.get(
+            "TPU_ACCELERATOR_TYPE", ""
+        ).lower().startswith("v7")
+        if is_v7:
+            logger.info("Detected TPU v7")
 
         num_visible_tpu_chips = len(visible_tpu_chips)
         num_accelerators_on_node = (

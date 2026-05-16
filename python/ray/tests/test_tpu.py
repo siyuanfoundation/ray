@@ -156,6 +156,7 @@ def test_get_current_node_tpu_topology_from_metadata():
         ("", "TPU-V3", None, False),
         ("4x", "TPU-V3", None, True),
         ("2x2x2", "TPU-V7X", "v7x-16", False),
+        ("2x2x1", "tpu7x-8", "v7x-8", False),
     ],
 )
 def test_infer_tpu_pod_type_from_topology(
