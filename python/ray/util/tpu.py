@@ -119,6 +119,7 @@ def get_tpu_num_slices_for_workers(
             accelerator_type=accelerator_type,
             resources_per_unit=resources_per_worker,
             num_slices=1,
+            num_workers=num_workers,
         )
 
         if workers_per_slice == 0:
@@ -137,6 +138,7 @@ def get_tpu_worker_resources(
     resources_per_unit: Optional[Dict[str, float]] = None,
     num_slices: int = 1,
     chips_per_vm: Optional[int] = None,
+    num_workers: Optional[int] = None,
 ) -> Tuple[int, Dict[str, float]]:
     """
     Calculates the number of workers and the resources required for each worker
@@ -151,6 +153,9 @@ def get_tpu_worker_resources(
         chips_per_vm: An optional override for the number of chips per VM.
             If unspecified, this is inferred automatically from the topology
             and accelerator type.
+        num_workers: An optional override for the total number of workers.
+            If specified, and `resources_per_unit` is None, the resources
+            will be calculated based on this value.
 
     Returns:
         A tuple containing:
@@ -174,7 +179,10 @@ def get_tpu_worker_resources(
 
     # If user didn't specify TPU, default to # of chips on 1 host.
     if "TPU" not in final_resources:
-        final_resources["TPU"] = resolved_chips_per_vm
+        if num_workers:
+            final_resources["TPU"] = total_chips_available / num_workers
+        else:
+            final_resources["TPU"] = resolved_chips_per_vm
 
     tpus_per_unit = final_resources["TPU"]
 
