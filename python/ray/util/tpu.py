@@ -57,9 +57,9 @@ def get_tpu_version_from_type(accelerator_type: str) -> str:
 
 
 def _get_tpu_resource_multiplier(accelerator_version: str) -> int:
-    import os
+    from ray._private.ray_constants import env_bool
 
-    if os.environ.get("RAY_TPU_V7_RESOURCE_IS_CORES", "").lower() == "true":
+    if env_bool("RAY_TPU_RESOURCE_IS_CORES", False):
         if "v7" in accelerator_version.lower() or "7x" in accelerator_version.lower():
             return 2
     return 1

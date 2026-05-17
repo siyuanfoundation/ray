@@ -15,7 +15,7 @@ spec:
             env:
             - name: RAY_TRAIN_V2_ENABLED
               value: "1"
-            - name: RAY_TPU_V7_RESOURCE_IS_CORES
+            - name: RAY_TPU_RESOURCE_IS_CORES
               value: "True"
             - name: RAY_STORAGE_PATH
               value: "gs://sizhang-tpu-us-east5/ray-experimental"
@@ -60,14 +60,20 @@ spec:
               env:
                 - name: RAY_TRAIN_V2_ENABLED
                   value: "1"
-                - name: RAY_TPU_V7_RESOURCE_IS_CORES
+                - name: RAY_TPU_RESOURCE_IS_CORES
                   value: "True"
+                - name: TPU_ACCELERATOR_TYPE
+                  value: "v7"
+                - name: ALLOW_MULTIPLE_LIBTPU_LOAD
+                  value: "1"
+                - name: TORCH_TPU_TOPOLOGY
+                  value: "2,2,1,2"
+                - name: TORCH_TPU_SLICEBUILDER_ADDRESSES
+                  value: "localhost:8471,localhost:8472,localhost:8473,localhost:8474,localhost:8475,localhost:8476,localhost:8477,localhost:8478"
+                - name: TPU_PROCESS_ADDRESSES
+                  value: "localhost:8471,localhost:8472,localhost:8473,localhost:8474,localhost:8475,localhost:8476,localhost:8477,localhost:8478"
                 - name: RAY_STORAGE_PATH
                   value: "gs://sizhang-tpu-us-east5/ray-experimental"
-                # - name: TORCH_TPU_SLICEBUILDER_ADDRESSES
-                #   value: "localhost:8471,localhost:8472,localhost:8473,localhost:8474,localhost:8475,localhost:8476,localhost:8477,localhost:8478"
-                # - name: TORCH_TPU_TOPOLOGY
-                #   value: "2,2,1,2"
                 - name: HF_TOKEN
                   valueFrom:
                     secretKeyRef:

@@ -99,6 +99,9 @@ python/ray/_raylet.pyd
 # Ray cluster configuration
 scripts/nodes.txt
 
+# git
+.git
+
 # OS X folder attributes
 .DS_Store
 
@@ -188,6 +191,7 @@ java/**/pom.xml
 venv
 .venv
 .conda
+venv_py311
 
 # pyenv version file
 .python-version

@@ -461,8 +461,6 @@ class TPUAcceleratorManager(AcceleratorManager):
 
         accel_type = environ.get("TPU_ACCELERATOR_TYPE", "").lower()
         is_v7 = "7x" in accel_type or "v7" in accel_type
-        if is_v7:
-            logger.info("Detected TPU v7")
 
         tpu_chips_per_host_bounds = list(
             map(int, environ["TPU_CHIPS_PER_HOST_BOUNDS"].split(","))
@@ -572,14 +570,58 @@ class TPUAcceleratorManager(AcceleratorManager):
         num_accelerators_on_node = (
             TPUAcceleratorManager.get_current_node_num_accelerators()
         )
+
+        accel_type = (
+            TPUAcceleratorManager.get_current_node_tpu_pod_type() or ""
+        ).lower()
+        is_v7 = "7x" in accel_type or "v7" in accel_type
+        is_cores_mode = env_bool("RAY_TPU_RESOURCE_IS_CORES", False)
+
         if num_visible_tpu_chips == num_accelerators_on_node:
             # Let the ML framework use the defaults
             os.environ.pop(TPU_CHIPS_PER_HOST_BOUNDS_ENV_VAR, None)
             os.environ.pop(TPU_HOST_BOUNDS_ENV_VAR, None)
             return
+
         os.environ[
             TPUAcceleratorManager.get_visible_accelerator_ids_env_var()
         ] = ",".join([str(i) for i in visible_tpu_chips])
+
+        if is_v7 and is_cores_mode:
+            # For v7 cores mode, ensure multiple processes can load libtpu.
+            os.environ["ALLOW_MULTIPLE_LIBTPU_LOAD"] = "1"
+
+            if "WORLD_SIZE" not in os.environ:
+                # Independent task(s): use 3D standalone mode.
+                # This avoids complex 4D mesh issues while still providing isolation.
+                # Note: We still use 1 process per chip because libtpu locks the device.
+                first_core = int(visible_tpu_chips[0])
+
+                # Filter to the physical chip(s)
+                unique_chips = sorted(list(set(int(i) // 2 for i in visible_tpu_chips)))
+                os.environ[
+                    TPUAcceleratorManager.get_visible_accelerator_ids_env_var()
+                ] = ",".join(map(str, unique_chips))
+
+                # Assign a unique port and name to avoid conflicts.
+                base_port = int(os.environ.get("TPU_PROCESS_PORT", "8471"))
+                port = base_port + first_core
+                os.environ["TPU_PROCESS_PORT"] = str(port)
+                os.environ["TPU_PROCESS_ADDRESSES"] = f"localhost:{port}"
+                os.environ["TPU_NAME"] = f"tpu-task-{first_core}"
+
+                # Ensure 4D variables are NOT set for 3D standalone mode.
+                os.environ.pop(TPU_CHIPS_PER_HOST_BOUNDS_ENV_VAR, None)
+                os.environ.pop(TPU_HOST_BOUNDS_ENV_VAR, None)
+                os.environ.pop("CLOUD_TPU_TASK_ID", None)
+            else:
+                # For distributed v7 tasks, we MUST NOT set any bounds variables
+                # (like TPU_CHIPS_PER_HOST_BOUNDS=1,1,1) because they force 3D mode
+                # and cause core-level indices to be rejected.
+                # torch_tpu will handle the 4D mesh setup internally.
+                pass
+            return
+
         if num_visible_tpu_chips == 1:
             os.environ[
                 TPU_CHIPS_PER_HOST_BOUNDS_ENV_VAR

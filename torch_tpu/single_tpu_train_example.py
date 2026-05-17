@@ -12,7 +12,7 @@ from torch_tpu import api
 import ray
 
 
-@ray.remote(resources={"TPU": 1})
+@ray.remote(resources={"TPU": 2})
 def train_linear_regression():
     print("TPU related environment variables:")
     for env in os.environ:

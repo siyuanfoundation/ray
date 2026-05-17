@@ -27,7 +27,7 @@ def test_v7_2x_verification():
         }
     ]
     with patch("ray.is_initialized", return_value=True):
-        with patch.dict("os.environ", {"RAY_TPU_V7_RESOURCE_IS_CORES": "True"}):
+        with patch.dict("os.environ", {"RAY_TPU_RESOURCE_IS_CORES": "True"}):
             with patch("ray.nodes", return_value=mock_nodes):
                 num_workers, resources = get_tpu_worker_resources(
                     topology=topology,
@@ -39,7 +39,7 @@ def test_v7_2x_verification():
 
     # 2. Test get_num_ready_tpu_slices
     with patch("ray.is_initialized", return_value=True):
-        with patch.dict("os.environ", {"RAY_TPU_V7_RESOURCE_IS_CORES": "True"}):
+        with patch.dict("os.environ", {"RAY_TPU_RESOURCE_IS_CORES": "True"}):
             with patch("ray.nodes", return_value=mock_nodes):
                 with patch(
                     "ray._private.state.available_resources_per_node",
