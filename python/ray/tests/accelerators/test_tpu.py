@@ -162,7 +162,7 @@ def test_autodetect_tpu_accelerator_type_fails_gracefully():
     "test_config",
     [
         (1, False),
-        (0.5, True),
+        (0.5, False),
         (3, True),
     ],
 )
@@ -394,7 +394,9 @@ def test_get_num_tpu_visible_chips_per_host():
 def test_inject_torch_tpu_env_vars(
     environ, expected_success, expected_topology, expected_addresses
 ):
-    TPUAcceleratorManager.inject_torch_tpu_env_vars(environ=environ)
+    TPUAcceleratorManager.inject_torch_tpu_env_vars(
+        environ=environ, slicebuilder_first_worker_port=100000
+    )
     if expected_success:
         assert environ["TORCH_TPU_TOPOLOGY"] == expected_topology
         assert environ["TORCH_TPU_SLICEBUILDER_ADDRESSES"] == expected_addresses

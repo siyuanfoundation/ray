@@ -580,9 +580,8 @@ class TPUAcceleratorManager(AcceleratorManager):
         if env_bool(NOSET_TPU_VISIBLE_CHIPS_ENV_VAR, False):
             return
 
-        is_v7 = env_bool("RAY_TPU_V7_RESOURCE_IS_CORES", False) and os.environ.get(
-            "TPU_ACCELERATOR_TYPE", ""
-        ).lower().startswith("v7")
+        accel_type = os.environ.get("TPU_ACCELERATOR_TYPE", "").lower()
+        is_v7 = "7x" in accel_type or "v7" in accel_type
         if is_v7:
             logger.info("Detected TPU v7")
 
@@ -599,15 +598,19 @@ class TPUAcceleratorManager(AcceleratorManager):
             TPUAcceleratorManager.get_visible_accelerator_ids_env_var()
         ] = ",".join([str(i) for i in visible_tpu_chips])
         if num_visible_tpu_chips == 1:
-            os.environ[
-                TPU_CHIPS_PER_HOST_BOUNDS_ENV_VAR
-            ] = TPU_CHIPS_PER_HOST_BOUNDS_1_CHIP_CONFIG
-            os.environ[TPU_HOST_BOUNDS_ENV_VAR] = TPU_SINGLE_HOST_BOUNDS
+            os.environ[TPU_CHIPS_PER_HOST_BOUNDS_ENV_VAR] = ",".join(
+                ["1"] * (4 if is_v7 else 3)
+            )
+            os.environ[TPU_HOST_BOUNDS_ENV_VAR] = ",".join(["1"] * (4 if is_v7 else 3))
         elif num_visible_tpu_chips == 2:
-            os.environ[
-                TPU_CHIPS_PER_HOST_BOUNDS_ENV_VAR
-            ] = TPU_CHIPS_PER_HOST_BOUNDS_2_CHIP_CONFIG
-            os.environ[TPU_HOST_BOUNDS_ENV_VAR] = TPU_SINGLE_HOST_BOUNDS
+            if is_v7:
+                os.environ[TPU_CHIPS_PER_HOST_BOUNDS_ENV_VAR] = "1,1,1,2"
+                os.environ[TPU_HOST_BOUNDS_ENV_VAR] = "1,1,1,2"
+            else:
+                os.environ[
+                    TPU_CHIPS_PER_HOST_BOUNDS_ENV_VAR
+                ] = TPU_CHIPS_PER_HOST_BOUNDS_2_CHIP_CONFIG
+                os.environ[TPU_HOST_BOUNDS_ENV_VAR] = TPU_SINGLE_HOST_BOUNDS
 
     @staticmethod
     def get_current_node_tpu_pod_type() -> Optional[str]:
